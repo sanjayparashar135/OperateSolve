@@ -7,8 +7,7 @@ import pytest
 from app.db.database import init_db
 from app.db.repository import Repository
 from app.main import create_app
-from app.services.chat_service import ChatService
-from tests.conftest import make_settings
+from tests.conftest import make_service, make_settings
 from tests.fakes import FakeProvider
 
 
@@ -165,7 +164,7 @@ async def test_client_disconnect_persists_partial_response(tmp_path):
     settings = make_settings(tmp_path)
     init_db(settings.database_path)
     repo = Repository(settings.database_path)
-    service = ChatService(repo, provider, settings)
+    service = make_service(settings, provider, repo)
     chat = repo.create_conversation(None)
     state = {"checks": 0}
 

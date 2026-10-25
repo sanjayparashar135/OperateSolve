@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.config import Settings
+from app.db.database import utc_now
 from app.db.repository import DuplicateClientRequest, Repository
 from app.extensions import augment_instructions
 from app.schemas.chat import MessageOut
-from app.services.llm.base import ChatTurn, LLMDelta, LLMDone, LLMError, LLMProvider
+from app.services.llm.base import ChatTurn, LLMDelta, LLMDone, LLMError, LLMProvider, LLMUsage
+from app.services.model_router import AUTO, ModelRouter, RoutingDecision
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +49,58 @@ class PreparedGeneration:
     user_message: dict[str, Any]
     assistant_message: dict[str, Any]
     replay: bool
+    # Set for every generation; None only for a replay, which calls no model.
+    decision: RoutingDecision | None = None
 
 
 class ChatService:
-    def __init__(self, repository: Repository, provider: LLMProvider, settings: Settings) -> None:
+    def __init__(
+        self,
+        repository: Repository,
+        provider: LLMProvider,
+        settings: Settings,
+        router: ModelRouter,
+    ) -> None:
         self.repo = repository
         self.provider = provider
         self.settings = settings
+        self.router = router
 
-    def create_conversation(self, title: str | None) -> dict[str, Any]:
-        return self.repo.create_conversation(title)
+    def create_conversation(
+        self,
+        title: str | None,
+        model_selection: str | None = None,
+        task_mode: str | None = None,
+    ) -> dict[str, Any]:
+        selection, mode = self._chosen_preference(model_selection, task_mode)
+        return self.repo.create_conversation(title, selection, mode)
+
+    def set_model_preference(
+        self,
+        conversation_id: str,
+        model_selection: str,
+        task_mode: str | None,
+    ) -> dict[str, Any]:
+        conversation = self.get_conversation(conversation_id)
+        selection, mode = self._chosen_preference(model_selection, task_mode or conversation["task_mode"])
+        updated = self.repo.set_model_preference(conversation_id, selection, mode)
+        if updated is None:
+            raise ChatNotFound("Conversation not found")
+        logger.info(
+            "model_preference_changed conversation_id=%s selection=%s task_mode=%s",
+            conversation_id,
+            selection,
+            mode,
+        )
+        return updated
+
+    def _chosen_preference(self, model_selection: str | None, task_mode: str | None) -> tuple[str, str]:
+        """Validate a preference the user just chose. A manual model must be usable now."""
+
+        selection, mode = self.router.normalize(model_selection, task_mode)
+        if selection != AUTO:
+            self.router.route(selection, mode)
+        return selection, mode
 
     def list_conversations(self) -> list[dict[str, Any]]:
         return self.repo.list_conversations()
@@ -89,6 +133,8 @@ class ChatService:
         conversation_id: str,
         content: str,
         client_request_id: str,
+        model_selection: str | None = None,
+        task_mode: str | None = None,
     ) -> PreparedGeneration:
         with _prepare_lock:
             conversation = self.repo.get_conversation(conversation_id)
@@ -99,6 +145,14 @@ class ChatService:
                 return self._replay_existing(conversation_id, existing)
             if self.repo.has_streaming(conversation_id):
                 raise ChatConflict("A response is already being generated in this conversation.")
+            selection, mode = self.router.normalize(
+                model_selection or conversation["model_selection"],
+                task_mode or conversation["task_mode"],
+            )
+            # Routing before any write: an unavailable manual model saves nothing.
+            decision = self.router.route(selection, mode)
+            if (selection, mode) != (conversation["model_selection"], conversation["task_mode"]):
+                self.repo.set_model_preference(conversation_id, selection, mode)
             title = None if conversation["title_customized"] or conversation["title"] != "New conversation" else derive_title(content)
             try:
                 user, assistant = self.repo.insert_exchange(
@@ -112,11 +166,14 @@ class ChatService:
                 if existing is None:
                     raise ChatConflict("This message is still being saved. Try again.")
                 return self._replay_existing(conversation_id, existing)
-            return PreparedGeneration(conversation_id, user, assistant, replay=False)
+            return PreparedGeneration(conversation_id, user, assistant, replay=False, decision=decision)
 
     def prepare_retry(self, conversation_id: str, message_id: str) -> PreparedGeneration:
+        """A retry is routed with the conversation's current preference, so switching models then retrying works."""
+
         with _prepare_lock:
-            if self.repo.get_conversation(conversation_id) is None:
+            conversation = self.repo.get_conversation(conversation_id)
+            if conversation is None:
                 raise ChatNotFound("Conversation not found")
             message = self.repo.get_message(message_id)
             if message is None or message["conversation_id"] != conversation_id:
@@ -131,12 +188,13 @@ class ChatService:
             user = self._preceding_user(conversation_id, message["position"])
             if user is None:
                 raise ChatConflict("There is no prompt to retry.")
+            decision = self.router.route(conversation["model_selection"], conversation["task_mode"])
             request_id = str(uuid.uuid4())
-            self.repo.mark_streaming(message["id"], request_id)
+            self.repo.mark_streaming(message["id"], request_id, **_routing_columns(decision))
             assistant = self.repo.get_message(message["id"])
             if assistant is None:
                 raise ChatNotFound("Message not found")
-            return PreparedGeneration(conversation_id, user, assistant, replay=False)
+            return PreparedGeneration(conversation_id, user, assistant, replay=False, decision=decision)
 
     async def replay(self, prepared: PreparedGeneration) -> AsyncIterator[str]:
         assistant = self.repo.get_message(prepared.assistant_message["id"]) or prepared.assistant_message
@@ -175,8 +233,13 @@ class ChatService:
             return
 
         instructions = augment_instructions(INSTRUCTIONS, conversation_id=prepared.conversation_id)
+        decision = prepared.decision
+        if decision is None:
+            conversation = self.get_conversation(prepared.conversation_id)
+            decision = self.router.route(conversation["model_selection"], conversation["task_mode"])
         async for chunk in self._run(
             prepared,
+            decision,
             turns,
             instructions,
             is_disconnected,
@@ -216,7 +279,14 @@ class ChatService:
             turns.append(ChatTurn(role=message["role"], content=message["content"]))
         return turns
 
-    def _meta(self, prepared: PreparedGeneration, request_id: str | None, *, replay: bool) -> dict[str, Any]:
+    def _meta(
+        self,
+        prepared: PreparedGeneration,
+        request_id: str | None,
+        *,
+        replay: bool,
+        decision: RoutingDecision | None = None,
+    ) -> dict[str, Any]:
         conversation = self.repo.get_conversation(prepared.conversation_id)
         return {
             "type": "meta",
@@ -226,11 +296,13 @@ class ChatService:
             "assistant_message_id": prepared.assistant_message["id"],
             "title": conversation["title"] if conversation else "New conversation",
             "replay": replay,
+            "routing": decision.public() if decision else None,
         }
 
     async def _run(
         self,
         prepared: PreparedGeneration,
+        decision: RoutingDecision,
         turns: list[ChatTurn],
         instructions: str,
         is_disconnected: Callable[[], Awaitable[bool]] | None,
@@ -238,48 +310,62 @@ class ChatService:
     ) -> AsyncIterator[str]:
         request_id = str(uuid.uuid4())
         assistant_id = prepared.assistant_message["id"]
-        self.repo.mark_streaming(assistant_id, request_id)
+        self.repo.mark_streaming(assistant_id, request_id, **_routing_columns(decision))
         logger.info(
-            "generation_started request_id=%s conversation_id=%s message_id=%s model=%s operator=%s",
+            "generation_started request_id=%s conversation_id=%s message_id=%s selection=%s task_mode=%s "
+            "routing_mode=%s requested_model=%s model=%s reasoning_effort=%s operator=%s reason=%r",
             request_id,
             prepared.conversation_id,
             assistant_id,
-            self.settings.openai_model,
+            decision.selection,
+            decision.task_mode or "",
+            decision.routing_mode,
+            decision.requested_model,
+            decision.model,
+            decision.reasoning_effort or "",
             operator,
+            decision.reason,
         )
+        started_at = utc_now()
         started = time.perf_counter()
+        first_token_ms: int | None = None
         parts: list[str] = []
-        model: str | None = self.settings.openai_model
-        input_tokens: int | None = None
-        output_tokens: int | None = None
+        model: str | None = decision.model
+        usage: LLMUsage | None = None
+        request_sent = False
         provider_response_id: str | None = None
         status = "complete"
         error: str | None = None
         saved = None
 
         try:
-            yield sse(self._meta(prepared, request_id, replay=False))
+            yield sse(self._meta(prepared, request_id, replay=False, decision=decision))
             async for event in self.provider.stream(
                 turns,
-                model=self.settings.openai_model,
+                model=decision.model,
                 instructions=instructions,
+                reasoning_effort=decision.reasoning_effort,
             ):
+                if not (isinstance(event, LLMError) and not event.request_sent):
+                    request_sent = True
                 if await _disconnected(is_disconnected):
                     status = "stopped"
                     break
                 if isinstance(event, LLMDelta):
                     if event.text:
+                        if first_token_ms is None:
+                            first_token_ms = int((time.perf_counter() - started) * 1000)
                         parts.append(event.text)
                         yield sse({"type": "delta", "text": event.text})
                 elif isinstance(event, LLMError):
                     status = "error"
                     error = event.message or "The model request failed. You can retry."
                     provider_response_id = event.provider_response_id
+                    usage = event.usage or usage
                     break
                 elif isinstance(event, LLMDone):
                     model = event.model or model
-                    input_tokens = event.input_tokens
-                    output_tokens = event.output_tokens
+                    usage = event.usage
                     provider_response_id = event.provider_response_id
             if status == "complete" and not "".join(parts).strip():
                 status = "error"
@@ -298,6 +384,9 @@ class ChatService:
         finally:
             latency_ms = int((time.perf_counter() - started) * 1000)
             content = "".join(parts)
+            input_tokens = usage.input_tokens if usage else None
+            output_tokens = usage.output_tokens if usage else None
+            cached_input_tokens = usage.cached_input_tokens if usage else None
             try:
                 saved = self.repo.finish_message(
                     assistant_id,
@@ -307,6 +396,7 @@ class ChatService:
                     latency_ms=latency_ms,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
+                    cached_input_tokens=cached_input_tokens,
                     request_id=request_id,
                     provider_response_id=provider_response_id,
                     error=_clip(error) if error else None,
@@ -314,14 +404,45 @@ class ChatService:
             except Exception:
                 saved = None
                 logger.exception("persist_failed request_id=%s", request_id)
+            if request_sent:
+                try:
+                    self.repo.record_usage(
+                        request_id=request_id,
+                        conversation_id=prepared.conversation_id,
+                        message_id=assistant_id,
+                        provider=self.settings.llm_provider,
+                        requested_model=decision.requested_model,
+                        model=model,
+                        status=status,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cached_input_tokens=cached_input_tokens,
+                        cache_write_tokens=usage.cache_write_tokens if usage else None,
+                        reasoning_tokens=usage.reasoning_tokens if usage else None,
+                        duration_ms=latency_ms,
+                        started_at=started_at,
+                        finished_at=utc_now(),
+                        provider_response_id=provider_response_id,
+                        selection=decision.selection,
+                        task_mode=decision.task_mode,
+                        routing_mode=decision.routing_mode,
+                        routing_reason=decision.reason,
+                        first_token_ms=first_token_ms,
+                    )
+                except Exception:
+                    logger.exception("usage_persist_failed request_id=%s", request_id)
             logger.info(
-                "generation_finished request_id=%s conversation_id=%s message_id=%s model=%s latency_ms=%s input_tokens=%s output_tokens=%s status=%s provider_response_id=%s",
+                "generation_finished request_id=%s conversation_id=%s message_id=%s routing_mode=%s requested_model=%s model=%s latency_ms=%s first_token_ms=%s input_tokens=%s cached_input_tokens=%s output_tokens=%s status=%s provider_response_id=%s",
                 request_id,
                 prepared.conversation_id,
                 assistant_id,
+                decision.routing_mode,
+                decision.requested_model,
                 model,
                 latency_ms,
+                "unavailable" if first_token_ms is None else first_token_ms,
                 "unavailable" if input_tokens is None else input_tokens,
+                "unavailable" if cached_input_tokens is None else cached_input_tokens,
                 "unavailable" if output_tokens is None else output_tokens,
                 status,
                 provider_response_id or "",
@@ -345,15 +466,27 @@ def public_message(message: dict[str, Any]) -> dict[str, Any]:
             "content": message["content"],
             "status": message["status"],
             "model": message.get("model"),
+            "requested_model": message.get("requested_model"),
+            "routing_mode": message.get("routing_mode"),
+            "routing_reason": message.get("routing_reason"),
             "latency_ms": message.get("latency_ms"),
             "input_tokens": message.get("input_tokens"),
             "output_tokens": message.get("output_tokens"),
+            "cached_input_tokens": message.get("cached_input_tokens"),
             "request_id": message.get("request_id"),
             "error": message.get("error"),
             "created_at": message["created_at"],
             "updated_at": message["updated_at"],
         }
     ).model_dump()
+
+
+def _routing_columns(decision: RoutingDecision) -> dict[str, str]:
+    return {
+        "requested_model": decision.requested_model,
+        "routing_mode": decision.routing_mode,
+        "routing_reason": decision.reason,
+    }
 
 
 def derive_title(content: str) -> str:

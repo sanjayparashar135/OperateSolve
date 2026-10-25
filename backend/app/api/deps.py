@@ -13,6 +13,7 @@ def get_service(request: Request) -> ChatService:
         repository=Repository(settings.database_path),
         provider=request.app.state.provider,
         settings=settings,
+        router=request.app.state.router,
     )
 
 

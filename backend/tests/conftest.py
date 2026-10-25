@@ -6,7 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.main import create_app
+from app.db.repository import Repository
+from app.main import build_registry, create_app
+from app.services.chat_service import ChatService
+from app.services.model_router import ModelRouter
 from tests.fakes import FakeProvider
 
 
@@ -23,6 +26,11 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
+
+
+def make_service(settings: Settings, provider, repo: Repository) -> ChatService:
+    router = ModelRouter(build_registry(settings), reasoning_effort=settings.openai_reasoning_effort)
+    return ChatService(repo, provider, settings, router)
 
 
 @pytest.fixture

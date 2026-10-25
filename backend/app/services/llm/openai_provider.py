@@ -10,7 +10,7 @@ import openai
 from openai import AsyncOpenAI
 
 from app.config import Settings
-from app.services.llm.base import ChatTurn, LLMDelta, LLMDone, LLMError, LLMEvent
+from app.services.llm.base import ChatTurn, LLMDelta, LLMDone, LLMError, LLMEvent, LLMUsage
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +38,15 @@ class OpenAIResponsesProvider:
         *,
         model: str | None = None,
         instructions: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> AsyncIterator[LLMEvent]:
         if not self.settings.llm_configured:
             yield LLMError(
                 message=(
                     "OpenAI API key is not configured. "
                     "Add OPENAI_API_KEY to backend/.env and restart the API."
-                )
+                ),
+                request_sent=False,
             )
             return
 
@@ -56,7 +58,7 @@ class OpenAIResponsesProvider:
             "stream": True,
             "max_output_tokens": self.settings.openai_max_output_tokens,
         }
-        effort = self.settings.openai_reasoning_effort.strip().lower()
+        effort = (reasoning_effort or self.settings.openai_reasoning_effort).strip().lower()
         if effort:
             if effort not in REASONING_EFFORTS:
                 logger.warning("ignoring unsupported reasoning effort=%s", effort)
@@ -77,8 +79,7 @@ class OpenAIResponsesProvider:
 
         model_name = selected_model
         response_id: str | None = None
-        input_tokens: int | None = None
-        output_tokens: int | None = None
+        usage: LLMUsage | None = None
         try:
             async for event in response_stream:
                 event_type = getattr(event, "type", "")
@@ -90,26 +91,23 @@ class OpenAIResponsesProvider:
                     delta = getattr(event, "delta", "") or ""
                     if delta:
                         yield LLMDelta(text=delta)
-                elif event_type == "response.completed":
-                    completed = getattr(event, "response", None)
-                    model_name = _text(getattr(completed, "model", None)) or model_name
-                    response_id = _text(getattr(completed, "id", None)) or response_id
-                    input_tokens, output_tokens = extract_usage(getattr(completed, "usage", None))
-                elif event_type == "response.incomplete":
-                    incomplete = getattr(event, "response", None)
-                    model_name = _text(getattr(incomplete, "model", None)) or model_name
-                    response_id = _text(getattr(incomplete, "id", None)) or response_id
-                    input_tokens, output_tokens = extract_usage(getattr(incomplete, "usage", None))
+                elif event_type in {"response.completed", "response.incomplete"}:
+                    # Streaming usage arrives only on the terminal response object.
+                    final = getattr(event, "response", None)
+                    model_name = _text(getattr(final, "model", None)) or model_name
+                    response_id = _text(getattr(final, "id", None)) or response_id
+                    usage = extract_usage(getattr(final, "usage", None))
                 elif event_type in {"response.failed", "error"}:
+                    failed = getattr(event, "response", None)
                     yield LLMError(
                         message=_event_error(event),
-                        provider_response_id=response_id,
+                        provider_response_id=_text(getattr(failed, "id", None)) or response_id,
+                        usage=extract_usage(getattr(failed, "usage", None)),
                     )
                     return
             yield LLMDone(
                 model=model_name,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+                usage=usage,
                 provider_response_id=response_id,
             )
         except Exception as exc:
@@ -126,16 +124,36 @@ class OpenAIResponsesProvider:
         finally:
             await _close_stream(response_stream)
 
+    async def check_model_access(self, model_id: str) -> bool | None:
+        """GET /v1/models/{id}: free, and confirms this key can see the model."""
+
+        if not self.settings.llm_configured:
+            return None
+        try:
+            await self._get_client().models.retrieve(model_id)
+        except Exception as exc:
+            status = getattr(exc, "status_code", None)
+            if status in {403, 404}:
+                return False
+            logger.warning(
+                "openai_model_check_failed model=%s status=%s detail=%s",
+                model_id,
+                status,
+                _clip(self._redact(str(exc))),
+            )
+            return None
+        return True
+
     def _public_error(self, exc: Exception, model: str) -> str:
         status = getattr(exc, "status_code", None)
         if status == 401 or isinstance(exc, openai.AuthenticationError):
             return "OpenAI rejected the API key. Update OPENAI_API_KEY in backend/.env and restart the API."
         if status == 403:
-            return "This OpenAI project cannot use the configured model."
+            return f"This OpenAI project cannot use the model '{model}'. Choose another model."
         if status == 404:
             return (
-                f"The model '{model}' was not found. "
-                "Set OPENAI_MODEL in backend/.env to a model this API key can access."
+                f"The model '{model}' was not found for this API key. "
+                "Choose another model, or turn it off with DISABLED_MODELS in backend/.env."
             )
         if status == 429 or isinstance(exc, openai.RateLimitError):
             return "OpenAI rate limit reached. Wait a moment and retry."
@@ -150,22 +168,35 @@ class OpenAIResponsesProvider:
         return text
 
 
-def extract_usage(usage: Any) -> tuple[int | None, int | None]:
-    """Read token counts from an SDK object or dict. Missing values stay null."""
+def extract_usage(usage: Any) -> LLMUsage | None:
+    """Read token counts from an SDK object or dict. Missing values stay null.
+
+    Responses API shape: input_tokens, output_tokens,
+    input_tokens_details.{cached_tokens, cache_write_tokens},
+    output_tokens_details.reasoning_tokens. Chat Completions names are accepted too.
+    """
 
     if usage is None:
-        return None, None
-    if isinstance(usage, dict):
-        raw_input = usage.get("input_tokens", usage.get("prompt_tokens"))
-        raw_output = usage.get("output_tokens", usage.get("completion_tokens"))
-    else:
-        raw_input = getattr(usage, "input_tokens", None)
-        if raw_input is None:
-            raw_input = getattr(usage, "prompt_tokens", None)
-        raw_output = getattr(usage, "output_tokens", None)
-        if raw_output is None:
-            raw_output = getattr(usage, "completion_tokens", None)
-    return _optional_int(raw_input), _optional_int(raw_output)
+        return None
+    input_details = _first(usage, "input_tokens_details", "prompt_tokens_details")
+    output_details = _first(usage, "output_tokens_details", "completion_tokens_details")
+    return LLMUsage(
+        input_tokens=_optional_int(_first(usage, "input_tokens", "prompt_tokens")),
+        output_tokens=_optional_int(_first(usage, "output_tokens", "completion_tokens")),
+        cached_input_tokens=_optional_int(_first(input_details, "cached_tokens")),
+        cache_write_tokens=_optional_int(_first(input_details, "cache_write_tokens")),
+        reasoning_tokens=_optional_int(_first(output_details, "reasoning_tokens")),
+    )
+
+
+def _first(source: Any, *names: str) -> Any:
+    if source is None:
+        return None
+    for name in names:
+        value = source.get(name) if isinstance(source, dict) else getattr(source, name, None)
+        if value is not None:
+            return value
+    return None
 
 
 def _optional_int(value: Any) -> int | None:

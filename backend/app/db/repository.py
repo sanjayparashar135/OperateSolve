@@ -23,7 +23,12 @@ class Repository:
         with connect(self.database_path) as connection:
             connection.execute("SELECT 1")
 
-    def create_conversation(self, title: str | None = None) -> dict[str, Any]:
+    def create_conversation(
+        self,
+        title: str | None = None,
+        model_selection: str = "auto",
+        task_mode: str = "general",
+    ) -> dict[str, Any]:
         conversation_id = str(uuid.uuid4())
         now = utc_now()
         customized = 1 if title else 0
@@ -31,10 +36,11 @@ class Repository:
         with connect(self.database_path) as connection:
             connection.execute(
                 """
-                INSERT INTO conversations (id, title, title_customized, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO conversations (
+                    id, title, title_customized, model_selection, task_mode, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (conversation_id, stored_title, customized, now, now),
+                (conversation_id, stored_title, customized, model_selection, task_mode, now, now),
             )
         conversation = self.get_conversation(conversation_id)
         if conversation is None:
@@ -71,6 +77,23 @@ class Repository:
                 WHERE id = ?
                 """,
                 (title, now, conversation_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_conversation(conversation_id)
+
+    def set_model_preference(
+        self,
+        conversation_id: str,
+        model_selection: str,
+        task_mode: str,
+    ) -> dict[str, Any] | None:
+        """Does not touch updated_at, so changing the model does not reorder the sidebar."""
+
+        with connect(self.database_path) as connection:
+            cursor = connection.execute(
+                "UPDATE conversations SET model_selection = ?, task_mode = ? WHERE id = ?",
+                (model_selection, task_mode, conversation_id),
             )
             if cursor.rowcount == 0:
                 return None
@@ -210,7 +233,15 @@ class Repository:
             raise RuntimeError("Messages were not saved")
         return user, assistant
 
-    def mark_streaming(self, message_id: str, request_id: str) -> None:
+    def mark_streaming(
+        self,
+        message_id: str,
+        request_id: str,
+        *,
+        requested_model: str | None = None,
+        routing_mode: str | None = None,
+        routing_reason: str | None = None,
+    ) -> None:
         now = utc_now()
         with connect(self.database_path) as connection:
             connection.execute(
@@ -221,14 +252,18 @@ class Repository:
                     error = NULL,
                     request_id = ?,
                     model = NULL,
+                    requested_model = ?,
+                    routing_mode = ?,
+                    routing_reason = ?,
                     latency_ms = NULL,
                     input_tokens = NULL,
                     output_tokens = NULL,
+                    cached_input_tokens = NULL,
                     provider_response_id = NULL,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (request_id, now, message_id),
+                (request_id, requested_model, routing_mode, routing_reason, now, message_id),
             )
 
     def finish_message(
@@ -244,6 +279,7 @@ class Repository:
         request_id: str | None,
         provider_response_id: str | None,
         error: str | None,
+        cached_input_tokens: int | None = None,
     ) -> dict[str, Any] | None:
         now = utc_now()
         with connect(self.database_path) as connection:
@@ -256,6 +292,7 @@ class Repository:
                     latency_ms = ?,
                     input_tokens = ?,
                     output_tokens = ?,
+                    cached_input_tokens = ?,
                     request_id = ?,
                     provider_response_id = ?,
                     error = ?,
@@ -269,6 +306,7 @@ class Repository:
                     latency_ms,
                     input_tokens,
                     output_tokens,
+                    cached_input_tokens,
                     request_id,
                     provider_response_id,
                     error,
@@ -287,12 +325,126 @@ class Repository:
                 )
         return _message(row) if row is not None else None
 
+    def record_usage(
+        self,
+        *,
+        request_id: str,
+        conversation_id: str,
+        message_id: str,
+        provider: str,
+        requested_model: str | None,
+        model: str | None,
+        status: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_input_tokens: int | None,
+        cache_write_tokens: int | None,
+        reasoning_tokens: int | None,
+        duration_ms: int | None,
+        started_at: str,
+        finished_at: str,
+        provider_response_id: str | None,
+        selection: str | None = None,
+        task_mode: str | None = None,
+        routing_mode: str | None = None,
+        routing_reason: str | None = None,
+        first_token_ms: int | None = None,
+    ) -> bool:
+        """Store one provider request. A repeated request_id is ignored, so usage counts once."""
+
+        reported = 1 if input_tokens is not None and output_tokens is not None else 0
+        with connect(self.database_path) as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO llm_usage (
+                    id, request_id, conversation_id, message_id, provider, requested_model, model,
+                    status, input_tokens, output_tokens, cached_input_tokens, cache_write_tokens,
+                    reasoning_tokens, usage_reported, duration_ms, started_at, finished_at,
+                    provider_response_id, source, selection, task_mode, routing_mode,
+                    routing_reason, first_token_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    request_id,
+                    conversation_id,
+                    message_id,
+                    provider,
+                    requested_model,
+                    model,
+                    status,
+                    input_tokens,
+                    output_tokens,
+                    cached_input_tokens,
+                    cache_write_tokens,
+                    reasoning_tokens,
+                    reported,
+                    duration_ms,
+                    started_at,
+                    finished_at,
+                    provider_response_id,
+                    selection,
+                    task_mode,
+                    routing_mode,
+                    routing_reason,
+                    first_token_ms,
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def list_usage(self, since: str | None = None) -> list[dict[str, Any]]:
+        """Usage rows, newest first, with the current conversation title when it still exists."""
+
+        query = """
+            SELECT u.*, c.title AS conversation_title
+            FROM llm_usage u
+            LEFT JOIN conversations c ON c.id = u.conversation_id
+        """
+        params: tuple[Any, ...] = ()
+        if since is not None:
+            query += " WHERE u.started_at >= ?"
+            params = (since,)
+        query += " ORDER BY u.started_at DESC"
+        with connect(self.database_path) as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [_usage(row) for row in rows]
+
+
+def _usage(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "request_id": row["request_id"],
+        "conversation_id": row["conversation_id"],
+        "conversation_title": row["conversation_title"],
+        "message_id": row["message_id"],
+        "provider": row["provider"],
+        "requested_model": row["requested_model"],
+        "model": row["model"],
+        "status": row["status"],
+        "input_tokens": row["input_tokens"],
+        "output_tokens": row["output_tokens"],
+        "cached_input_tokens": row["cached_input_tokens"],
+        "cache_write_tokens": row["cache_write_tokens"],
+        "reasoning_tokens": row["reasoning_tokens"],
+        "usage_reported": bool(row["usage_reported"]),
+        "duration_ms": row["duration_ms"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+        "source": row["source"],
+        "selection": row["selection"],
+        "task_mode": row["task_mode"],
+        "routing_mode": row["routing_mode"],
+        "routing_reason": row["routing_reason"],
+        "first_token_ms": row["first_token_ms"],
+    }
+
 
 def _conversation(row: sqlite3.Row) -> dict[str, Any]:
     return {
         "id": row["id"],
         "title": row["title"],
         "title_customized": bool(row["title_customized"]),
+        "model_selection": row["model_selection"],
+        "task_mode": row["task_mode"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -307,9 +459,13 @@ def _message(row: sqlite3.Row) -> dict[str, Any]:
         "content": row["content"],
         "status": row["status"],
         "model": row["model"],
+        "requested_model": row["requested_model"],
+        "routing_mode": row["routing_mode"],
+        "routing_reason": row["routing_reason"],
         "latency_ms": row["latency_ms"],
         "input_tokens": row["input_tokens"],
         "output_tokens": row["output_tokens"],
+        "cached_input_tokens": row["cached_input_tokens"],
         "request_id": row["request_id"],
         "provider_response_id": row["provider_response_id"],
         "client_request_id": row["client_request_id"],

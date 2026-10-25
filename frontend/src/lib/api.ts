@@ -3,7 +3,10 @@ import type {
   ConversationDetail,
   Health,
   Message,
+  ModelCatalog,
+  ModelPreference,
   StreamHandlers,
+  UsageReport,
 } from "@/lib/types";
 
 export const API_BASE =
@@ -27,8 +30,19 @@ export function listChats(signal?: AbortSignal): Promise<Conversation[]> {
   return request<Conversation[]>("/api/chats", { signal });
 }
 
-export function createChat(): Promise<Conversation> {
-  return request<Conversation>("/api/chats", { method: "POST", body: JSON.stringify({}) });
+export function createChat(preference?: ModelPreference): Promise<Conversation> {
+  return request<Conversation>("/api/chats", { method: "POST", body: JSON.stringify(preference ?? {}) });
+}
+
+export function setChatModel(id: string, preference: ModelPreference): Promise<Conversation> {
+  return request<Conversation>(`/api/chats/${id}/model`, {
+    method: "PATCH",
+    body: JSON.stringify(preference),
+  });
+}
+
+export function getModels(signal?: AbortSignal): Promise<ModelCatalog> {
+  return request<ModelCatalog>("/api/models", { signal, cache: "no-store" });
 }
 
 export function getChat(id: string, signal?: AbortSignal): Promise<ConversationDetail> {
@@ -50,16 +64,22 @@ export function getHealth(signal?: AbortSignal): Promise<Health> {
   return request<Health>("/api/health", { signal });
 }
 
+export function getUsage(days: number | null, signal?: AbortSignal): Promise<UsageReport> {
+  const query = days == null ? "" : `?days=${days}`;
+  return request<UsageReport>(`/api/usage${query}`, { signal, cache: "no-store" });
+}
+
 export async function streamMessage(
   conversationId: string,
   content: string,
   clientRequestId: string,
+  preference: ModelPreference,
   handlers: StreamHandlers,
   signal: AbortSignal,
 ): Promise<boolean> {
   return streamRequest(
     `/api/chats/${conversationId}/messages`,
-    { content, client_request_id: clientRequestId },
+    { content, client_request_id: clientRequestId, ...preference },
     handlers,
     signal,
   );

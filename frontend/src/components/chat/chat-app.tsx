@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Composer } from "@/components/chat/composer";
 import { MessageList } from "@/components/chat/message-list";
+import { ModelSelector } from "@/components/chat/model-selector";
 import { Sidebar } from "@/components/chat/sidebar";
 import { Welcome } from "@/components/chat/welcome";
 import {
@@ -16,13 +17,25 @@ import {
   createChat,
   getChat,
   getHealth,
+  getModels,
   isAbortError,
   listChats,
   retryMessage,
+  setChatModel,
   streamMessage,
 } from "@/lib/api";
 import { upsertConversation } from "@/lib/format";
-import type { Conversation, Health, Message, MetaEvent } from "@/lib/types";
+import type {
+  Conversation,
+  Health,
+  Message,
+  MetaEvent,
+  ModelCatalog,
+  ModelPreference,
+  StreamHandlers,
+} from "@/lib/types";
+
+const DEFAULT_PREFERENCE: ModelPreference = { model_selection: "auto", task_mode: "general" };
 
 export function ChatApp() {
   const router = useRouter();
@@ -39,6 +52,8 @@ export function ChatApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   const [apiOnline, setApiOnline] = useState(true);
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
+  const [preference, setPreference] = useState<ModelPreference>(DEFAULT_PREFERENCE);
 
   const sendingRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -82,6 +97,14 @@ export function ChatApp() {
     return () => controller.abort();
   }, []);
 
+  const refreshCatalog = useCallback((signal?: AbortSignal) => {
+    getModels(signal)
+      .then(setCatalog)
+      .catch(() => {
+        // Keep the catalog already on screen; health reports an offline API.
+      });
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
     const load = () => {
@@ -94,6 +117,7 @@ export function ChatApp() {
           if (isAbortError(error)) return;
           setApiOnline(false);
         });
+      refreshCatalog(controller.signal);
     };
     load();
     const timer = window.setInterval(load, 30000);
@@ -101,7 +125,7 @@ export function ChatApp() {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, []);
+  }, [refreshCatalog]);
 
   useEffect(() => {
     visibleRef.current = requestedId;
@@ -115,6 +139,7 @@ export function ChatApp() {
       .then((detail) => {
         if (visibleRef.current !== target) return;
         setMessages(detail.messages);
+        setPreference(preferenceOf(detail.conversation));
         setConversations((current) => upsertConversation(current, detail.conversation));
         setApiOnline(true);
       })
@@ -186,20 +211,34 @@ export function ChatApp() {
     conversationId: string,
     tempUserId: string,
     tempAssistantId: string,
-    work: (handlers: Parameters<typeof streamMessage>[3], signal: AbortSignal) => Promise<boolean>,
+    work: (handlers: StreamHandlers, signal: AbortSignal) => Promise<boolean>,
     content?: string,
   ) {
     let assistantId = tempAssistantId;
     const controller = new AbortController();
     abortRef.current = controller;
-    const handlers = {
+    const handlers: StreamHandlers = {
       onMeta: (meta: MetaEvent) => {
         assistantId = meta.assistant_message_id;
+        const routing = meta.routing
+          ? {
+              model: meta.routing.model,
+              requested_model: meta.routing.requested_model,
+              routing_mode: meta.routing.routing_mode,
+              routing_reason: meta.routing.reason,
+            }
+          : {};
         setMessages((current) =>
           current.map((message) => {
             if (message.id === tempUserId) return { ...message, id: meta.user_message_id, conversation_id: meta.conversation_id };
             if (message.id === tempAssistantId || message.id === meta.assistant_message_id) {
-              return { ...message, id: meta.assistant_message_id, conversation_id: meta.conversation_id, request_id: meta.request_id };
+              return {
+                ...message,
+                ...routing,
+                id: meta.assistant_message_id,
+                conversation_id: meta.conversation_id,
+                request_id: meta.request_id,
+              };
             }
             return message;
           }),
@@ -236,6 +275,7 @@ export function ChatApp() {
       if (!isAbortError(error)) {
         const message = error instanceof ApiError ? error.message : error instanceof Error ? error.message : "The request failed.";
         toast.error(message);
+        if (error instanceof ApiError && error.status === 409) refreshCatalog();
       }
       await syncConversation(conversationId, isAbortError(error) ? undefined : content);
     } finally {
@@ -261,10 +301,11 @@ export function ChatApp() {
     stickRef.current = true;
     let conversationId = requestedId;
     const createdNew = !conversationId;
+    const chosen = preference;
     let optimistic = false;
     try {
       if (!conversationId) {
-        const created = await createChat();
+        const created = await createChat(chosen);
         conversationId = created.id;
         setConversations((current) => upsertConversation(current, created));
       }
@@ -295,7 +336,7 @@ export function ChatApp() {
         conversationId,
         tempUserId,
         tempAssistantId,
-        (handlers, signal) => streamMessage(conversationId!, content, clientRequestId, handlers, signal),
+        (handlers, signal) => streamMessage(conversationId!, content, clientRequestId, chosen, handlers, signal),
         content,
       );
     } catch (error) {
@@ -305,6 +346,22 @@ export function ChatApp() {
       setStreamingId(null);
       if (!optimistic) setDraft(content);
       toast.error(error instanceof Error ? error.message : "Could not start the conversation.");
+      if (error instanceof ApiError && error.status === 409) refreshCatalog();
+    }
+  }
+
+  async function changePreference(next: ModelPreference) {
+    const previous = preference;
+    setPreference(next);
+    if (!requestedId) return;
+    const target = requestedId;
+    try {
+      const saved = await setChatModel(target, next);
+      setConversations((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+    } catch (error) {
+      if (visibleRef.current === target) setPreference(previous);
+      toast.error(error instanceof Error ? error.message : "Could not change the model.");
+      refreshCatalog();
     }
   }
 
@@ -319,7 +376,19 @@ export function ChatApp() {
     setMessages((current) =>
       current.map((item) =>
         item.id === message.id
-          ? { ...item, content: "", status: "streaming", error: null, latency_ms: null, input_tokens: null, output_tokens: null }
+          ? {
+              ...item,
+              content: "",
+              status: "streaming",
+              error: null,
+              latency_ms: null,
+              input_tokens: null,
+              output_tokens: null,
+              cached_input_tokens: null,
+              routing_mode: null,
+              routing_reason: null,
+              requested_model: null,
+            }
           : item,
       ),
     );
@@ -328,6 +397,7 @@ export function ChatApp() {
 
   const active = conversations.find((conversation) => conversation.id === requestedId) ?? null;
   const showWelcome = !requestedId && !loadingMessages;
+  const routeSummary = describeRoute(catalog, preference) ?? health?.model ?? "OperateSolve";
 
   return (
     <div className="shell">
@@ -355,7 +425,7 @@ export function ChatApp() {
           </Button>
           <div className="topbar-title">
             <h2>{active?.title ?? "New conversation"}</h2>
-            <p>{health?.model ?? "OperateSolve"}</p>
+            <p>{routeSummary}</p>
           </div>
         </header>
         {!apiOnline ? (
@@ -391,6 +461,14 @@ export function ChatApp() {
             value={draft}
             streaming={streaming}
             disabled={!apiOnline}
+            toolbar={
+              <ModelSelector
+                catalog={catalog}
+                preference={preference}
+                disabled={streaming || !apiOnline}
+                onChange={(next) => void changePreference(next)}
+              />
+            }
             onChange={setDraft}
             onSubmit={() => void send(draft)}
             onStop={stop}
@@ -400,4 +478,24 @@ export function ChatApp() {
       </section>
     </div>
   );
+}
+
+function preferenceOf(conversation: Conversation): ModelPreference {
+  return {
+    model_selection: conversation.model_selection ?? DEFAULT_PREFERENCE.model_selection,
+    task_mode: conversation.task_mode ?? DEFAULT_PREFERENCE.task_mode,
+  };
+}
+
+function describeRoute(catalog: ModelCatalog | null, preference: ModelPreference): string | null {
+  if (!catalog) return null;
+  if (preference.model_selection !== "auto") {
+    const model = catalog.models.find((item) => item.key === preference.model_selection);
+    if (!model) return null;
+    return model.available ? `Manual · ${model.model_id}` : `Manual · ${model.model_id} (unavailable)`;
+  }
+  const rule = catalog.auto_rules.find((item) => item.task_mode === preference.task_mode);
+  if (!rule) return null;
+  const target = rule.resolved_model ?? "no model available";
+  return `Auto · ${rule.label} → ${target}${rule.routing_mode === "fallback" ? " (fallback)" : ""}`;
 }

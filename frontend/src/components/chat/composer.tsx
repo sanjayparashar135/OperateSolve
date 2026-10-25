@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { ArrowUpIcon, SquareIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -8,6 +8,7 @@ export function Composer({
   value,
   streaming,
   disabled,
+  toolbar,
   onChange,
   onSubmit,
   onStop,
@@ -15,6 +16,7 @@ export function Composer({
   value: string;
   streaming: boolean;
   disabled: boolean;
+  toolbar?: ReactNode;
   onChange: (value: string) => void;
   onSubmit: () => void;
   onStop: () => void;
@@ -54,15 +56,18 @@ export function Composer({
           }
         }}
       />
-      {streaming ? (
-        <Button type="button" size="icon-lg" variant="secondary" aria-label="Stop generating" onClick={onStop}>
-          <SquareIcon />
-        </Button>
-      ) : (
-        <Button type="submit" size="icon-lg" aria-label="Send message" disabled={disabled || value.trim().length === 0}>
-          <ArrowUpIcon />
-        </Button>
-      )}
+      <div className="composer-bar">
+        <div className="composer-tools">{toolbar}</div>
+        {streaming ? (
+          <Button type="button" size="icon-lg" variant="secondary" aria-label="Stop generating" onClick={onStop}>
+            <SquareIcon />
+          </Button>
+        ) : (
+          <Button type="submit" size="icon-lg" aria-label="Send message" disabled={disabled || value.trim().length === 0}>
+            <ArrowUpIcon />
+          </Button>
+        )}
+      </div>
     </form>
   );
 }
