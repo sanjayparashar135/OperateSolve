@@ -13,7 +13,6 @@ import { Sidebar } from "@/components/chat/sidebar";
 import { Welcome } from "@/components/chat/welcome";
 import {
   ApiError,
-  API_BASE,
   createChat,
   getChat,
   getHealth,
@@ -430,7 +429,7 @@ export function ChatApp() {
         </header>
         {!apiOnline ? (
           <div className="banner warn" role="status">
-            The API at {API_BASE} is unreachable. Start the backend, then refresh this page.
+            The API at <code>/api</code> is unreachable. Start the backend on port 8000, then refresh this page.
           </div>
         ) : health && !health.llm_configured ? (
           <div className="banner" role="status">

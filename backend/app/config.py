@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     model_access_check: bool = True
     database_path: str = "data/operatesolve.db"
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    # Local Swagger/ReDoc/OpenAPI. Keep true for local exploration; false for demos.
+    expose_api_docs: bool = True
     log_level: str = "INFO"
     llm_provider: str = "openai"
     # Relative paths resolve from the backend directory.

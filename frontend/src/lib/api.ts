@@ -14,8 +14,8 @@ import type {
   UsageReport,
 } from "@/lib/types";
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") || "http://127.0.0.1:8000";
+/** Same-origin base. Browser calls `/api/*`; Next.js proxies to the local FastAPI process. */
+export const API_BASE = "";
 
 export class ApiError extends Error {
   status: number;

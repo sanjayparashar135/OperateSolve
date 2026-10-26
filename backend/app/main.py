@@ -85,7 +85,15 @@ def create_app(
             )
         yield
 
-    app = FastAPI(title="OperateSolve API", version="1.0.0", lifespan=lifespan)
+    docs = "/docs" if settings.expose_api_docs else None
+    app = FastAPI(
+        title="OperateSolve API",
+        version="1.0.0",
+        lifespan=lifespan,
+        docs_url=docs,
+        redoc_url="/redoc" if settings.expose_api_docs else None,
+        openapi_url="/openapi.json" if settings.expose_api_docs else None,
+    )
     app.state.settings = settings
     app.state.pricing = pricing
     app.state.provider = provider or build_provider(settings)
