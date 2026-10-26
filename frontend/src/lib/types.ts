@@ -129,8 +129,16 @@ export type UsageSummary = {
   cache_write_tokens: number;
   output_tokens: number;
   reasoning_tokens: number;
+  /** cached_input_tokens / input_tokens over requests that reported a cached count (0–1). */
+  cache_hit_rate: number | null;
   estimated_cost_usd: number | null;
   average_cost_usd: number | null;
+  estimated_input_cost_usd: number | null;
+  estimated_uncached_input_cost_usd: number | null;
+  estimated_cache_read_savings_usd: number | null;
+  estimated_cache_write_overhead_usd: number | null;
+  /** Read savings minus write overhead. Negative when writes cost more than reads saved. */
+  estimated_cache_savings_usd: number | null;
   average_latency_ms: number | null;
   average_first_token_ms: number | null;
   first_request_at: string | null;
@@ -182,6 +190,7 @@ export type RecentRequest = {
   routing_mode: RoutingMode | null;
   routing_reason: string | null;
   first_token_ms: number | null;
+  purpose?: "chat" | "summarization" | "incident_analysis" | "parallel_experiment" | string;
   status: string;
   source: "live" | "backfill" | string;
   usage_reported: boolean;
@@ -193,6 +202,7 @@ export type RecentRequest = {
   reasoning_tokens: number | null;
   duration_ms: number | null;
   estimated_cost_usd: number | null;
+  estimated_cache_savings_usd: number | null;
 };
 
 export type UsageReport = {
@@ -221,4 +231,61 @@ export type StreamHandlers = {
   onDelta: (text: string) => void;
   onDone: (message: Message) => void;
   onError: (event: { error: string; message: Message }) => void;
+};
+
+export type IncidentSeverity = "P1" | "P2" | "P3" | "P4";
+
+export type IncidentAnalysis = {
+  incident_id: string;
+  severity: IncidentSeverity;
+  summary: string;
+  probable_cause: string;
+  recommended_actions: string[];
+  requires_human_approval: boolean;
+};
+
+export type IncidentAnalyzeResponse = {
+  analysis: IncidentAnalysis;
+  request_id: string;
+  model: string | null;
+  latency_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_input_tokens: number | null;
+  cache_write_tokens: number | null;
+  reasoning_tokens: number | null;
+  estimated_cost_usd: number | null;
+};
+
+export type ExperimentMode = "sequential" | "parallel";
+
+export type ExperimentTaskStatus = "complete" | "error" | "timeout";
+
+export type ParallelTaskResult = {
+  task_id: string;
+  task_name: string;
+  status: ExperimentTaskStatus;
+  result: string | null;
+  error: string | null;
+  request_id: string;
+  latency_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  estimated_cost_usd: number | null;
+};
+
+export type ParallelExperimentTotals = {
+  latency_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: number | null;
+  successful_tasks: number;
+  failed_tasks: number;
+};
+
+export type ParallelExperimentResponse = {
+  mode: ExperimentMode;
+  model: string;
+  tasks: ParallelTaskResult[];
+  totals: ParallelExperimentTotals;
 };

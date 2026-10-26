@@ -14,6 +14,8 @@ def get_service(request: Request) -> ChatService:
         provider=request.app.state.provider,
         settings=settings,
         router=request.app.state.router,
+        registry=request.app.state.registry,
+        pricing=request.app.state.pricing,
     )
 
 

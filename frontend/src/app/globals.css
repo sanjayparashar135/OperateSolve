@@ -1121,6 +1121,10 @@
   font-size: 12.5px;
 }
 
+.cache-table {
+  margin-top: 14px;
+}
+
 .empty-usage {
   display: flex;
   flex-direction: column;
@@ -1344,11 +1348,340 @@
   }
 }
 
+.incident-page {
+  height: 100dvh;
+  overflow-y: auto;
+}
+
+.incident-inner {
+  display: flex;
+  width: min(760px, calc(100% - 40px));
+  flex-direction: column;
+  gap: 18px;
+  margin: 0 auto;
+  padding: 22px 0 48px;
+}
+
+.incident-head h1 {
+  margin-top: 6px;
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 640;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+}
+
+.incident-lede {
+  max-width: 58ch;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.eyebrow {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.incident-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in oklch, var(--card) 82%, transparent);
+}
+
+.incident-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.incident-form .field > span {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.incident-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  border: 1px solid var(--input);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--background) 70%, transparent);
+  padding: 12px 14px;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  outline: none;
+}
+
+.incident-textarea:focus {
+  border-color: color-mix(in oklch, var(--ring) 70%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 22%, transparent);
+}
+
+.incident-textarea:disabled {
+  opacity: 0.65;
+}
+
+.incident-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.incident-error {
+  border: 1px solid color-mix(in oklch, var(--destructive) 45%, transparent);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--destructive) 12%, transparent);
+  padding: 12px 14px;
+  color: color-mix(in oklch, var(--destructive) 85%, white);
+  font-size: 14px;
+}
+
+.incident-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+
+.incident-result {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in oklch, var(--card) 88%, transparent);
+}
+
+.incident-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.incident-result-head h2 {
+  margin-top: 4px;
+  font-size: 22px;
+  font-weight: 620;
+  letter-spacing: -0.03em;
+}
+
+.severity-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.severity-pill.p1 {
+  background: color-mix(in oklch, var(--destructive) 22%, transparent);
+  color: color-mix(in oklch, var(--destructive) 85%, white);
+}
+
+.severity-pill.p2 {
+  background: color-mix(in oklch, oklch(0.75 0.14 55) 22%, transparent);
+  color: oklch(0.86 0.1 70);
+}
+
+.severity-pill.p3 {
+  background: color-mix(in oklch, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
+
+.severity-pill.p4 {
+  background: color-mix(in oklch, var(--muted) 80%, transparent);
+  color: var(--muted-foreground);
+}
+
+.incident-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.incident-fields dt {
+  margin-bottom: 4px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.incident-fields dd {
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.incident-fields ol {
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.incident-fields li + li {
+  margin-top: 4px;
+}
+
+.incident-meta {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.experiment-inner {
+  width: min(860px, calc(100% - 40px));
+}
+
+.experiment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.experiment-note {
+  max-width: 62ch;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+.experiment-table-wrap {
+  overflow-x: auto;
+}
+
+.experiment-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.experiment-table th,
+.experiment-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.experiment-table th {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.experiment-table td:not(:first-child),
+.experiment-table th:not(:first-child) {
+  font-family: var(--font-mono);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.experiment-mode-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in oklch, var(--background) 65%, transparent);
+}
+
+.experiment-mode-btn {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  padding: 6px 10px;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.experiment-mode-btn.active {
+  background: color-mix(in oklch, var(--primary) 16%, transparent);
+  color: var(--primary);
+}
+
+.experiment-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.experiment-task {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in oklch, var(--background) 55%, transparent);
+}
+
+.experiment-task-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.experiment-task-head h3 {
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.experiment-task-body,
+.experiment-task-error {
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.experiment-task-error {
+  color: color-mix(in oklch, var(--destructive) 85%, white);
+}
+
+.status-pill.timeout {
+  background: color-mix(in oklch, oklch(0.75 0.14 55) 22%, transparent);
+  color: oklch(0.86 0.1 70);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .message-in,
   .thinking span,
   .with-caret .markdown > :last-child::after,
-  .suggestion {
+  .suggestion,
+  .spin {
     animation: none;
     transition: none;
   }

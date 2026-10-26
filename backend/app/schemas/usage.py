@@ -15,8 +15,17 @@ class UsageSummary(BaseModel):
     cache_write_tokens: int
     output_tokens: int
     reasoning_tokens: int
+    # cached_input_tokens / input_tokens, over requests that reported a cached count.
+    cache_hit_rate: float | None
     estimated_cost_usd: float | None
     average_cost_usd: float | None
+    # Input-side estimates for priced requests. Savings compare against every
+    # input token billed at the uncached rate; net = read savings - write overhead.
+    estimated_input_cost_usd: float | None
+    estimated_uncached_input_cost_usd: float | None
+    estimated_cache_read_savings_usd: float | None
+    estimated_cache_write_overhead_usd: float | None
+    estimated_cache_savings_usd: float | None
     average_latency_ms: int | None
     average_first_token_ms: int | None
     first_request_at: str | None
@@ -74,6 +83,7 @@ class RecentRequest(BaseModel):
     routing_mode: str | None
     routing_reason: str | None
     first_token_ms: int | None
+    purpose: str
     status: str
     source: str
     usage_reported: bool
@@ -85,6 +95,7 @@ class RecentRequest(BaseModel):
     reasoning_tokens: int | None
     duration_ms: int | None
     estimated_cost_usd: float | None
+    estimated_cache_savings_usd: float | None
 
 
 class PricingSummary(BaseModel):

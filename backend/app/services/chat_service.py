@@ -17,8 +17,13 @@ from app.db.database import utc_now
 from app.db.repository import DuplicateClientRequest, Repository
 from app.extensions import augment_instructions
 from app.schemas.chat import MessageOut
+from app.services.context.budget import ContextBudgetExceeded, resolve_budget
+from app.services.context.summarize import ConversationSummarizer
+from app.services.context.window import HistoryMessage
 from app.services.llm.base import ChatTurn, LLMDelta, LLMDone, LLMError, LLMProvider, LLMUsage
+from app.services.llm.registry import ModelRegistry
 from app.services.model_router import AUTO, ModelRouter, RoutingDecision
+from app.services.pricing import PricingTable
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +65,22 @@ class ChatService:
         provider: LLMProvider,
         settings: Settings,
         router: ModelRouter,
+        registry: ModelRegistry | None = None,
+        pricing: PricingTable | None = None,
     ) -> None:
         self.repo = repository
         self.provider = provider
         self.settings = settings
         self.router = router
+        self.registry = registry or router.registry
+        self.pricing = pricing
+        self.summarizer = ConversationSummarizer(
+            repository,
+            provider,
+            settings,
+            self.registry,
+            pricing,
+        )
 
     def create_conversation(
         self,
@@ -213,8 +229,8 @@ class ChatService:
         is_disconnected: Callable[[], Awaitable[bool]] | None,
         operator: str,
     ) -> AsyncIterator[str]:
-        turns = self._turns(prepared.conversation_id, exclude_message_id=prepared.assistant_message["id"])
-        if not any(turn.role == "user" for turn in turns):
+        history = self._history(prepared.conversation_id, exclude_message_id=prepared.assistant_message["id"])
+        if not any(message.role == "user" for message in history):
             saved = self.repo.finish_message(
                 prepared.assistant_message["id"],
                 content="",
@@ -237,10 +253,83 @@ class ChatService:
         if decision is None:
             conversation = self.get_conversation(prepared.conversation_id)
             decision = self.router.route(conversation["model_selection"], conversation["task_mode"])
+
+        spec = self.registry.get(decision.model)
+        if spec is None:
+            saved = self.repo.finish_message(
+                prepared.assistant_message["id"],
+                content="",
+                status="error",
+                model=None,
+                latency_ms=0,
+                input_tokens=None,
+                output_tokens=None,
+                request_id=prepared.assistant_message.get("request_id"),
+                provider_response_id=None,
+                error=f"Routed model '{decision.model}' is not registered.",
+            )
+            if saved is not None:
+                yield sse(self._meta(prepared, saved.get("request_id"), replay=False, decision=decision))
+                yield sse({"type": "error", "error": saved["error"], "message": public_message(saved)})
+            return
+
+        budget = resolve_budget(spec, self.settings)
+        try:
+            outcome = await self.summarizer.apply(
+                conversation_id=prepared.conversation_id,
+                instructions=instructions,
+                messages=history,
+                budget=budget,
+                chat_message_id=prepared.assistant_message["id"],
+            )
+        except ContextBudgetExceeded as exc:
+            saved = self.repo.finish_message(
+                prepared.assistant_message["id"],
+                content="",
+                status="error",
+                model=None,
+                latency_ms=0,
+                input_tokens=None,
+                output_tokens=None,
+                request_id=prepared.assistant_message.get("request_id"),
+                provider_response_id=None,
+                error=exc.message,
+            )
+            if saved is not None:
+                yield sse(self._meta(prepared, saved.get("request_id"), replay=False, decision=decision))
+                yield sse({"type": "error", "error": saved["error"], "message": public_message(saved)})
+            return
+
+        plan = outcome.plan
+        logger.info(
+            "context_plan conversation_id=%s model=%s input_budget=%s estimated_tokens=%s "
+            "retained_messages=%s excluded_messages=%s truncated=%s summarization_triggered=%s "
+            "summary_reused=%s summary_failed=%s summary_tokens=%s checkpoint=%s",
+            prepared.conversation_id,
+            budget.model,
+            budget.input_budget,
+            plan.estimated_total_tokens,
+            len(plan.retained),
+            len(plan.excluded),
+            plan.truncated,
+            outcome.triggered,
+            outcome.reused_existing,
+            outcome.failed,
+            outcome.summary_tokens if outcome.summary_tokens is not None else "none",
+            outcome.checkpoint_position if outcome.checkpoint_position is not None else "none",
+        )
+        if outcome.failed:
+            logger.warning(
+                "summarization_fallback conversation_id=%s reason=%r chat_model=%s",
+                prepared.conversation_id,
+                outcome.failure_reason,
+                decision.model,
+            )
+
         async for chunk in self._run(
             prepared,
             decision,
-            turns,
+            plan.provider_turns(),
             instructions,
             is_disconnected,
             operator,
@@ -267,8 +356,8 @@ class ChatService:
         ]
         return users[-1] if users else None
 
-    def _turns(self, conversation_id: str, *, exclude_message_id: str) -> list[ChatTurn]:
-        turns: list[ChatTurn] = []
+    def _history(self, conversation_id: str, *, exclude_message_id: str) -> list[HistoryMessage]:
+        history: list[HistoryMessage] = []
         for message in self.repo.list_messages(conversation_id):
             if message["id"] == exclude_message_id or message["status"] == "streaming":
                 continue
@@ -276,8 +365,18 @@ class ChatService:
                 continue
             if message["role"] not in {"user", "assistant"}:
                 continue
-            turns.append(ChatTurn(role=message["role"], content=message["content"]))
-        return turns
+            history.append(
+                HistoryMessage(
+                    id=message["id"],
+                    position=message["position"],
+                    role=message["role"],
+                    content=message["content"],
+                )
+            )
+        return history
+
+    def _turns(self, conversation_id: str, *, exclude_message_id: str) -> list[ChatTurn]:
+        return [message.as_turn() for message in self._history(conversation_id, exclude_message_id=exclude_message_id)]
 
     def _meta(
         self,
@@ -432,7 +531,7 @@ class ChatService:
                 except Exception:
                     logger.exception("usage_persist_failed request_id=%s", request_id)
             logger.info(
-                "generation_finished request_id=%s conversation_id=%s message_id=%s routing_mode=%s requested_model=%s model=%s latency_ms=%s first_token_ms=%s input_tokens=%s cached_input_tokens=%s output_tokens=%s status=%s provider_response_id=%s",
+                "generation_finished request_id=%s conversation_id=%s message_id=%s routing_mode=%s requested_model=%s model=%s latency_ms=%s first_token_ms=%s input_tokens=%s cached_input_tokens=%s cache_write_tokens=%s output_tokens=%s status=%s provider_response_id=%s",
                 request_id,
                 prepared.conversation_id,
                 assistant_id,
@@ -443,6 +542,7 @@ class ChatService:
                 "unavailable" if first_token_ms is None else first_token_ms,
                 "unavailable" if input_tokens is None else input_tokens,
                 "unavailable" if cached_input_tokens is None else cached_input_tokens,
+                "unavailable" if usage is None or usage.cache_write_tokens is None else usage.cache_write_tokens,
                 "unavailable" if output_tokens is None else output_tokens,
                 status,
                 provider_response_id or "",

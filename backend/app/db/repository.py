@@ -325,12 +325,69 @@ class Repository:
                 )
         return _message(row) if row is not None else None
 
+    def get_summary(self, conversation_id: str) -> dict[str, Any] | None:
+        with connect(self.database_path) as connection:
+            row = connection.execute(
+                "SELECT * FROM conversation_summaries WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+        return _summary(row) if row else None
+
+    def upsert_summary(
+        self,
+        conversation_id: str,
+        *,
+        summary_text: str,
+        covered_through_position: int,
+        covered_through_message_id: str,
+        summary_tokens: int | None,
+        model: str | None,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with connect(self.database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO conversation_summaries (
+                    conversation_id, summary_text, covered_through_position,
+                    covered_through_message_id, summary_tokens, model, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(conversation_id) DO UPDATE SET
+                    summary_text = excluded.summary_text,
+                    covered_through_position = excluded.covered_through_position,
+                    covered_through_message_id = excluded.covered_through_message_id,
+                    summary_tokens = excluded.summary_tokens,
+                    model = excluded.model,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    conversation_id,
+                    summary_text,
+                    covered_through_position,
+                    covered_through_message_id,
+                    summary_tokens,
+                    model,
+                    now,
+                ),
+            )
+        summary = self.get_summary(conversation_id)
+        if summary is None:
+            raise RuntimeError("Summary was not saved")
+        return summary
+
+    def clear_summary(self, conversation_id: str) -> bool:
+        with connect(self.database_path) as connection:
+            cursor = connection.execute(
+                "DELETE FROM conversation_summaries WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            return cursor.rowcount > 0
+
     def record_usage(
         self,
         *,
         request_id: str,
-        conversation_id: str,
-        message_id: str,
+        conversation_id: str | None,
+        message_id: str | None,
         provider: str,
         requested_model: str | None,
         model: str | None,
@@ -349,10 +406,16 @@ class Repository:
         routing_mode: str | None = None,
         routing_reason: str | None = None,
         first_token_ms: int | None = None,
+        purpose: str = "chat",
     ) -> bool:
         """Store one provider request. A repeated request_id is ignored, so usage counts once."""
 
         reported = 1 if input_tokens is not None and output_tokens is not None else 0
+        purpose_value = (
+            purpose
+            if purpose in {"chat", "summarization", "incident_analysis", "parallel_experiment"}
+            else "chat"
+        )
         with connect(self.database_path) as connection:
             cursor = connection.execute(
                 """
@@ -361,8 +424,8 @@ class Repository:
                     status, input_tokens, output_tokens, cached_input_tokens, cache_write_tokens,
                     reasoning_tokens, usage_reported, duration_ms, started_at, finished_at,
                     provider_response_id, source, selection, task_mode, routing_mode,
-                    routing_reason, first_token_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?, ?)
+                    routing_reason, first_token_ms, purpose
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'live', ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid.uuid4()),
@@ -388,6 +451,7 @@ class Repository:
                     routing_mode,
                     routing_reason,
                     first_token_ms,
+                    purpose_value,
                 ),
             )
             return cursor.rowcount > 0
@@ -411,6 +475,7 @@ class Repository:
 
 
 def _usage(row: sqlite3.Row) -> dict[str, Any]:
+    keys = set(row.keys())
     return {
         "request_id": row["request_id"],
         "conversation_id": row["conversation_id"],
@@ -435,6 +500,19 @@ def _usage(row: sqlite3.Row) -> dict[str, Any]:
         "routing_mode": row["routing_mode"],
         "routing_reason": row["routing_reason"],
         "first_token_ms": row["first_token_ms"],
+        "purpose": row["purpose"] if "purpose" in keys and row["purpose"] else "chat",
+    }
+
+
+def _summary(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "conversation_id": row["conversation_id"],
+        "summary_text": row["summary_text"],
+        "covered_through_position": row["covered_through_position"],
+        "covered_through_message_id": row["covered_through_message_id"],
+        "summary_tokens": row["summary_tokens"],
+        "model": row["model"],
+        "updated_at": row["updated_at"],
     }
 
 

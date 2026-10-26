@@ -32,6 +32,13 @@ export function formatUsd(value: number | null): string {
   }).format(value);
 }
 
+/** A 0–1 ratio as a percentage, e.g. 0.512 → "51%", 0.034 → "3.4%". */
+export function formatPercent(ratio: number | null): string {
+  if (ratio == null) return "—";
+  const percent = ratio * 100;
+  return `${percent.toFixed(percent > 0 && percent < 10 ? 1 : 0)}%`;
+}
+
 export function formatRate(value: number | null): string {
   if (value == null) return "input rate";
   return `$${value.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;

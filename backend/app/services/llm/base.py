@@ -4,7 +4,9 @@ Add a new model vendor by implementing LLMProvider and registering it in factory
 """
 
 from dataclasses import dataclass
-from typing import AsyncIterator, Literal, Protocol
+from typing import AsyncIterator, Generic, Literal, Protocol, TypeVar
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,49 @@ class LLMError:
     request_sent: bool = True
 
 
+@dataclass(frozen=True)
+class LLMComplete:
+    """Non-streaming completion used for summarization and similar side calls."""
+
+    text: str
+    model: str | None
+    usage: LLMUsage | None
+    provider_response_id: str | None = None
+
+
+@dataclass(frozen=True)
+class LLMStructured(Generic[T]):
+    """Schema-enforced structured output (OpenAI Structured Outputs / equivalent)."""
+
+    data: T
+    model: str | None
+    usage: LLMUsage | None
+    provider_response_id: str | None = None
+
+
+@dataclass(frozen=True)
+class LLMRefusal:
+    """Safety refusal from the provider; not a schema-valid structured payload."""
+
+    message: str
+    model: str | None = None
+    usage: LLMUsage | None = None
+    provider_response_id: str | None = None
+    request_sent: bool = True
+
+
+@dataclass(frozen=True)
+class LLMIncomplete:
+    """Response ended before a complete structured payload was produced."""
+
+    message: str
+    reason: str | None = None
+    model: str | None = None
+    usage: LLMUsage | None = None
+    provider_response_id: str | None = None
+    request_sent: bool = True
+
+
 LLMEvent = LLMDelta | LLMDone | LLMError
 
 
@@ -60,6 +105,8 @@ class LLMProvider(Protocol):
     """Providers may also define `async check_model_access(model_id) -> bool | None`.
 
     It should cost nothing and return None when access cannot be determined.
+    Providers that support summarization also implement `complete`.
+    Providers that support Structured Outputs also implement `parse`.
     """
 
     def stream(

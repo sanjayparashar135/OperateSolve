@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import chats, health, models, usage
+from app.api.routes import chats, experiments, health, incidents, models, usage
 from app.config import Settings, get_settings
 from app.db.database import init_db
 from app.logging_config import configure_logging
@@ -94,6 +94,8 @@ def create_app(
     app.include_router(chats.router)
     app.include_router(models.router)
     app.include_router(usage.router)
+    app.include_router(incidents.router)
+    app.include_router(experiments.router)
 
     @app.get("/")
     def root() -> dict[str, str]:

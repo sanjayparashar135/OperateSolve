@@ -71,6 +71,22 @@ class CostEstimate:
     cache_write: Decimal
     output: Decimal
     long_context: bool
+    # Every input token at the ordinary input rate, as if nothing had been cached.
+    uncached_baseline_input: Decimal = Decimal(0)
+    # Read discount: cached tokens x (input rate - cached rate).
+    cache_read_savings: Decimal = Decimal(0)
+    # Write premium: written tokens x (write rate - input rate). Zero when writes cost ordinary input.
+    cache_write_overhead: Decimal = Decimal(0)
+
+    @property
+    def input(self) -> Decimal:
+        return self.uncached_input + self.cached_input + self.cache_write
+
+    @property
+    def cache_savings(self) -> Decimal:
+        """Net input saving versus the uncached baseline. Negative when write premiums exceed read discounts."""
+
+        return self.cache_read_savings - self.cache_write_overhead
 
 
 def estimate_cost(
@@ -86,6 +102,8 @@ def estimate_cost(
     Follows OpenAI's documented formula: cached reads and cache writes are
     subsets of input_tokens, so ordinary input = input - cached - writes.
     Missing cached/write counts are treated as zero (priced as ordinary input).
+    Each input token is billed at exactly one rate, so writes are never also
+    counted as ordinary input.
     """
 
     total_input = max(input_tokens, 0)
@@ -109,6 +127,9 @@ def estimate_cost(
         cache_write=write_cost,
         output=output_cost,
         long_context=long_context,
+        uncached_baseline_input=Decimal(total_input) * rates.input / PER_MILLION,
+        cache_read_savings=Decimal(cached) * (rates.input - cached_rate) / PER_MILLION,
+        cache_write_overhead=Decimal(writes) * (write_rate - rates.input) / PER_MILLION,
     )
 
 

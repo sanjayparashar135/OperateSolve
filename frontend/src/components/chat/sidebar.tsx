@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { ChartColumnIcon, EllipsisIcon, PlusIcon } from "lucide-react";
+import { ChartColumnIcon, EllipsisIcon, FlaskConicalIcon, PlusIcon, ShieldAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -107,6 +107,14 @@ export function Sidebar({
           <PlusIcon />
           New chat
         </Button>
+        <Link href="/incidents" className="nav-link">
+          <ShieldAlertIcon />
+          Incident analysis
+        </Link>
+        <Link href="/experiments" className="nav-link">
+          <FlaskConicalIcon />
+          LLM Experiments
+        </Link>
         <Link href="/usage" className="nav-link">
           <ChartColumnIcon />
           Usage &amp; cost

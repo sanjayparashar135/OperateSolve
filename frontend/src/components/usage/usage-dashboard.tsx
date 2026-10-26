@@ -19,6 +19,7 @@ import {
   formatDateTime,
   formatDay,
   formatLatency,
+  formatPercent,
   formatRate,
   formatUsd,
   isSameModel,
@@ -136,6 +137,7 @@ export function UsageDashboard() {
             ) : (
               <>
                 <DailyChart daily={report.daily} />
+                <CacheCard report={report} />
                 <ModelTable report={report} />
                 <RouteTable report={report} />
                 <ConversationTable report={report} />
@@ -217,8 +219,6 @@ function Notices({ report }: { report: UsageReport }) {
 }
 
 function Kpis({ totals }: { totals: UsageSummary }) {
-  const cachedShare =
-    totals.input_tokens > 0 ? Math.round((totals.cached_input_tokens / totals.input_tokens) * 100) : null;
   return (
     <div className="kpi-grid">
       <article className="kpi featured">
@@ -248,7 +248,8 @@ function Kpis({ totals }: { totals: UsageSummary }) {
           {formatCompact(totals.input_tokens)}
         </p>
         <p className="kpi-sub">
-          {formatCompact(totals.cached_input_tokens)} cached{cachedShare != null ? ` (${cachedShare}%)` : ""}
+          {formatCompact(totals.cached_input_tokens)} cached
+          {totals.cache_hit_rate != null ? ` (${formatPercent(totals.cache_hit_rate)})` : ""}
           {totals.cache_write_tokens > 0 ? ` · ${formatCompact(totals.cache_write_tokens)} cache writes` : ""}
         </p>
       </article>
@@ -308,6 +309,106 @@ function DailyChart({ daily }: { daily: DailyUsage[] }) {
             </div>
           );
         })}
+      </div>
+    </section>
+  );
+}
+
+function CacheCard({ report }: { report: UsageReport }) {
+  const { totals } = report;
+  return (
+    <section className="usage-card">
+      <header className="card-head">
+        <div>
+          <h2>
+            Prompt caching <span className="est-badge">Estimate</span>
+          </h2>
+          <p>
+            OpenAI caches repeated prompt prefixes automatically. Hit rate is cached-read input tokens ÷ input tokens.
+            Savings compare the actual input cost with the same tokens billed at the uncached input rate: reads save
+            money, while cache writes on Luna cost 1.25× input, so a first call that only writes costs more than uncached.
+            {totals.requests_cached_unknown > 0
+              ? ` ${formatCount(totals.requests_cached_unknown)} imported request${
+                  totals.requests_cached_unknown === 1 ? " has" : "s have"
+                } no cached detail and ${totals.requests_cached_unknown === 1 ? "is" : "are"} left out of the hit rate.`
+              : ""}
+          </p>
+        </div>
+      </header>
+      <div className="kpi-grid">
+        <article className="kpi">
+          <p className="kpi-label">Cache hit rate</p>
+          <p className="kpi-value">{formatPercent(totals.cache_hit_rate)}</p>
+          <p className="kpi-sub">Cached reads ÷ input tokens</p>
+        </article>
+        <article className="kpi">
+          <p className="kpi-label">Cached-read tokens</p>
+          <p className="kpi-value" title={formatCount(totals.cached_input_tokens)}>
+            {formatCompact(totals.cached_input_tokens)}
+          </p>
+          <p className="kpi-sub">Billed at the cached-input rate</p>
+        </article>
+        <article className="kpi">
+          <p className="kpi-label">Cache-write tokens</p>
+          <p className="kpi-value" title={formatCount(totals.cache_write_tokens)}>
+            {formatCompact(totals.cache_write_tokens)}
+          </p>
+          <p className="kpi-sub">Billed at the cache-write rate where one applies</p>
+        </article>
+        <article className="kpi featured">
+          <p className="kpi-label">Net input savings</p>
+          <p className="kpi-value">{formatUsd(totals.estimated_cache_savings_usd)}</p>
+          <p className="kpi-sub">
+            {formatUsd(totals.estimated_cache_read_savings_usd)} saved on reads −{" "}
+            {formatUsd(totals.estimated_cache_write_overhead_usd)} write overhead
+          </p>
+        </article>
+        <article className="kpi">
+          <p className="kpi-label">Input cost</p>
+          <p className="kpi-value">{formatUsd(totals.estimated_input_cost_usd)}</p>
+          <p className="kpi-sub">vs {formatUsd(totals.estimated_uncached_input_cost_usd)} if nothing were cached</p>
+        </article>
+      </div>
+      <div className="table-wrap cache-table">
+        <table className="usage-table">
+          <thead>
+            <tr>
+              <th>Model</th>
+              <th className="num">Input</th>
+              <th className="num">Cached reads</th>
+              <th className="num">Cache writes</th>
+              <th className="num">Hit rate</th>
+              <th className="num">Avg first token</th>
+              <th className="num">Input cost</th>
+              <th className="num">Uncached baseline</th>
+              <th className="num">Read savings</th>
+              <th className="num">Write overhead</th>
+              <th className="num">Net savings</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.by_model.map((row) => (
+              <tr key={row.model}>
+                <td className="mono">
+                  {row.display_name ? <span className="strong">{row.display_name} </span> : null}
+                  <span className={cn(row.display_name && "muted")}>{row.model}</span>
+                </td>
+                <td className="num">{formatCount(row.input_tokens)}</td>
+                <td className="num">{formatCount(row.cached_input_tokens)}</td>
+                <td className="num">{formatCount(row.cache_write_tokens)}</td>
+                <td className="num">{formatPercent(row.cache_hit_rate)}</td>
+                <td className="num">{formatLatency(row.average_first_token_ms)}</td>
+                <td className="num">{formatUsd(row.estimated_input_cost_usd)}</td>
+                <td className="num muted">{formatUsd(row.estimated_uncached_input_cost_usd)}</td>
+                <td className="num">{formatUsd(row.estimated_cache_read_savings_usd)}</td>
+                <td className="num">{formatUsd(row.estimated_cache_write_overhead_usd)}</td>
+                <td className={cn("num strong", (row.estimated_cache_savings_usd ?? 0) < 0 && "warn-text")}>
+                  {formatUsd(row.estimated_cache_savings_usd)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </section>
   );
@@ -515,7 +616,9 @@ function RecentTable({ report }: { report: UsageReport }) {
               <th>Status</th>
               <th className="num">Input</th>
               <th className="num">Cached</th>
+              <th className="num">Cache writes</th>
               <th className="num">Output</th>
+              <th className="num">First token</th>
               <th className="num">Duration</th>
               <th className="num">Est. cost</th>
             </tr>
@@ -525,7 +628,13 @@ function RecentTable({ report }: { report: UsageReport }) {
               <tr key={row.request_id} title={`Request ${row.request_id}`}>
                 <td className="nowrap">{formatDateTime(row.started_at)}</td>
                 <td className="title-cell">
-                  {row.conversation_title ?? <span className="muted">Deleted conversation</span>}
+                  {row.purpose === "incident_analysis" ? (
+                    <span className="muted">Incident analysis</span>
+                  ) : row.purpose === "parallel_experiment" ? (
+                    <span className="muted">LLM experiment</span>
+                  ) : (
+                    row.conversation_title ?? <span className="muted">Deleted conversation</span>
+                  )}
                 </td>
                 <td className="mono" title={row.routing_reason ?? undefined}>
                   <div className="route-cell">
@@ -541,19 +650,28 @@ function RecentTable({ report }: { report: UsageReport }) {
                 </td>
                 <td>
                   <span className={cn("status-pill", row.status)}>{row.status}</span>
+                  {row.purpose === "summarization" ? <span className="status-pill imported">summary</span> : null}
+                  {row.purpose === "incident_analysis" ? (
+                    <span className="status-pill imported">incident</span>
+                  ) : null}
+                  {row.purpose === "parallel_experiment" ? (
+                    <span className="status-pill imported">experiment</span>
+                  ) : null}
                   {row.source === "backfill" ? <span className="status-pill imported">imported</span> : null}
                 </td>
                 {row.usage_reported ? (
                   <>
                     <td className="num">{formatCount(row.input_tokens)}</td>
                     <td className="num">{row.cached_input_tokens == null ? "n/a" : formatCount(row.cached_input_tokens)}</td>
+                    <td className="num">{row.cache_write_tokens == null ? "n/a" : formatCount(row.cache_write_tokens)}</td>
                     <td className="num">{formatCount(row.output_tokens)}</td>
                   </>
                 ) : (
-                  <td className="num warn-text" colSpan={3}>
+                  <td className="num warn-text" colSpan={4}>
                     usage missing
                   </td>
                 )}
+                <td className="num">{formatLatency(row.first_token_ms)}</td>
                 <td className="num">{formatLatency(row.duration_ms)}</td>
                 <td className="num strong">
                   {row.estimated_cost_usd != null ? formatUsd(row.estimated_cost_usd) : row.usage_reported ? "unpriced" : "—"}

@@ -185,6 +185,7 @@ def record(**overrides) -> dict:
         "started_at": "2026-10-24T10:00:00+00:00",
         "finished_at": "2026-10-24T10:00:01+00:00",
         "source": "live",
+        "purpose": "chat",
     }
     base.update(overrides)
     return base
@@ -275,7 +276,7 @@ def test_phase1_database_is_migrated_and_backfilled_once(tmp_path):
     assert rows[0]["conversation_title"] == "Old chat"
     assert repo.get_message("a1")["cached_input_tokens"] is None
     with sqlite3.connect(path) as check:
-        assert check.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert check.execute("PRAGMA user_version").fetchone()[0] == 3
     conversation = repo.get_conversation("c1")
     assert (conversation["model_selection"], conversation["task_mode"]) == ("auto", "general")
     assert rows[0]["routing_mode"] is None

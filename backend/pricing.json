@@ -4,7 +4,7 @@
   "tier": "standard",
   "source_url": "https://developers.openai.com/api/docs/pricing",
   "verified_at": "2026-10-25",
-  "notes": "OpenAI API Standard tier list prices. cache_write is the default 30-minute prompt-cache write rate; models without one bill cache writes as ordinary input. long_context applies to the whole request when input exceeds above_input_tokens. gpt-5-mini and gpt-5-nano are deprecated (shutdown 2026-12-11) and cap input at 272K, so they have no long-context tier. Not Cursor pricing.",
+  "notes": "OpenAI API Standard tier list prices. Caching rates verified 2026-10-25 against the model pages and https://developers.openai.com/api/docs/guides/prompt-caching: GPT-5.6 and later read cached input at 0.1x input (0.05x for gpt-6.1-sol) and write at 1.25x input for the default 30-minute lifetime (12-hour writes, 2.5x, are not requested by OperateSolve). GPT-5.5 and earlier, including gpt-5-mini and gpt-5-nano, have no cache-write surcharge, so they have no cache_write rate and any reported writes bill as ordinary input. long_context applies to the whole request when input exceeds above_input_tokens. gpt-5-mini and gpt-5-nano are deprecated (shutdown 2026-12-11) and cap input at 272K, so they have no long-context tier. Not Cursor pricing.",
   "models": {
     "gpt-6-luna": {
       "input": 0.10,

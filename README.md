@@ -1,6 +1,6 @@
 # OperateSolve
 
-OperateSolve is a local AI copilot for enterprise operations. Phase 1 is a dark, multi-turn chat workspace: conversations persist in SQLite, replies stream from the OpenAI Responses API, and each answer shows model, latency, and token usage. Phase 2.1 adds a usage and cost dashboard. Phase 2.2 adds per-conversation model selection (Auto, Luna, Mini, Nano) with deterministic, rule-based routing.
+OperateSolve is a local AI copilot for enterprise operations. Phase 1 is a dark, multi-turn chat workspace: conversations persist in SQLite, replies stream from the OpenAI Responses API, and each answer shows model, latency, and token usage. **Phase 2 is complete** (see [`PHASE2_COMPLETION.md`](PHASE2_COMPLETION.md)): usage and cost dashboard (2.1), per-conversation model selection with deterministic routing (2.2), prompt-cache tuning and measurement (2.3), model-aware context budgets with summarization (2.4), schema-enforced incident analysis (2.5A), and a sequential-vs-parallel LLM experiment (2.5B).
 
 The OpenAI API key stays in `backend/.env`. The browser only talks to the local FastAPI server.
 
@@ -40,7 +40,11 @@ Layers, so later phases can plug in without rewriting the chat route:
 | Model registry | `backend/app/services/llm/registry.py` | Model ids, display names, capabilities, reasoning settings, deprecation dates, availability (Phase 2.2) |
 | Model router | `backend/app/services/model_router.py` | Deterministic manual/Auto selection and fallback (Phase 2.2) |
 | Data | `backend/app/db` | SQLite conversations, messages, per-request LLM usage |
-| Usage and cost | `backend/app/services/pricing.py`, `usage_service.py`, `backend/pricing.json` | Token accounting and estimated USD cost (Phase 2.1) |
+| Usage and cost | `backend/app/services/pricing.py`, `usage_service.py`, `backend/pricing.json` | Token accounting and estimated USD cost (Phase 2.1), cache hit rate and savings (Phase 2.3) |
+| Prompt caching | `backend/app/services/llm/prompt_cache.py`, `backend/scripts/cache_experiment.py` | Per-model cache request settings and a manual experiment (Phase 2.3) |
+| Context & summaries | `backend/app/services/context/` | Token budgets, sliding-window history, incremental summarization (Phase 2.4) |
+| Incident analysis | `backend/app/services/incident_service.py`, `/incidents` | Schema-enforced Structured Outputs (Phase 2.5A) |
+| LLM experiments | `backend/app/services/parallel_experiment_service.py`, `/experiments` | Sequential vs parallel latency demo (Phase 2.5B) |
 | Future RAG, agents, MCP, auth | `backend/app/extensions.py` | Hooks are called and currently no-op |
 
 The default and baseline model is `gpt-6-luna`. `OPENAI_REASONING_EFFORT` defaults to `low` so replies stay responsive. Set it to `none` for the lowest latency and cost, or `medium` for deeper answers. Output token counts include reasoning tokens when the API reports them that way. If usage is missing, the UI shows "usage unavailable" instead of inventing numbers.
@@ -112,6 +116,156 @@ Unknown values return 422. A manual selection of an unavailable model returns 40
 
 The registry entries are provider-neutral (`provider`, `model_id`, capabilities, reasoning settings). To add Azure OpenAI or Amazon Bedrock, implement `LLMProvider` (`stream`, optionally `check_model_access`), register it in `factory.py`, and add `ModelSpec` entries with that provider name and their rates in `pricing.json`. The router and dashboard need no changes. No routing framework or new dependency was added.
 
+## Context window management (Phase 2.4)
+
+Long conversations would eventually exceed a model's input limit and drive up input-token cost. OperateSolve keeps every message in SQLite, then builds each provider request with a **conservative, model-aware input budget**, a **token-aware sliding window**, and an optional **incremental AI summary** of older turns.
+
+Official windows (checked 2026-10-25): Luna `gpt-6-luna` 1,050,000 context / 922,000 max input / 128,000 max output; Mini and Nano 400,000 / 272,000 / 128,000. The app does **not** use those ceilings for everyday chat. Defaults:
+
+| Setting | Default | Role |
+| --- | --- | --- |
+| `CONTEXT_MAX_INPUT_TOKENS` | `24000` | Soft input cap, still clamped to the routed model's documented max input minus output/reasoning reserves |
+| `CONTEXT_TOKEN_SAFETY_MARGIN` | `1.15` | Pads local token estimates when fitting history |
+| `CONTEXT_REASONING_RESERVE_TOKENS` | `1024` | Headroom reserved inside the context window |
+| `SUMMARIZATION_ENABLED` | `true` | Master switch |
+| `SUMMARIZATION_MODEL` | `gpt-6-luna` | Separate low-cost call; defaults to the current non-deprecated efficient model (not Mini/Nano) |
+| `SUMMARIZATION_MAX_OUTPUT_TOKENS` | `400` | Bounds summary length |
+| `SUMMARIZATION_TRIGGER_EXCLUDED_TOKENS` | `800` | First summarization only runs when newly excluded history reaches this estimate |
+| `SUMMARIZATION_SUMMARY_BUDGET_TOKENS` | `500` | Room reserved for a summary when one is not yet present |
+
+### How a request is assembled
+
+1. **Instructions** stay the fixed OperateSolve system prompt (cache-friendly; no timestamps or request ids).
+2. **Latest user message** is always kept and never silently truncated. If instructions + that message alone exceed the budget, the assistant turn errors with an actionable message.
+3. **Recent complete turns** (user + assistant pairs) are selected newest→oldest within the remaining budget, then sent oldest→first. A pair is never split just to fit.
+4. When older turns must be dropped and excluded content crosses the trigger (or a prior summary needs an incremental update), **one** summarization call runs on the summarization model. The compact summary is injected as untrusted user/assistant notes after instructions and before retained raw history. Original messages stay in SQLite.
+5. A per-conversation checkpoint (`conversation_summaries`) stores the summary text and the last covered message id/position. Later updates merge `previous summary + newly excluded turns` only. Stale checkpoints (missing message id) are cleared. Summarization failures fall back to the sliding window; the chat model is never swapped because of a summary error.
+
+Token counts for budgeting use a local characters÷4 heuristic plus the safety margin. OpenAI's reported usage remains the source of truth for cost. Expect estimates to be approximate for non-English text and dense code.
+
+### Cost implications
+
+- Chat input shrinks when history is windowed, which usually lowers chat input cost.
+- Summarization adds a separate `llm_usage` row with `purpose=summarization` (visible as a **summary** tag on Recent requests). At Luna rates, a ~400-token summary is typically well under $0.001.
+- Prompt caching still applies: stable instructions, a stable summary until the next checkpoint, then growing recent history. Avoid putting dynamic ids in prompts (unchanged from Phase 2.3).
+
+### Manual checks
+
+1. **Short chat:** send a few short turns on Luna. The provider should receive full history; no summary row appears in Usage.
+2. **Long chat:** temporarily set `CONTEXT_MAX_INPUT_TOKENS=1500` and `SUMMARIZATION_TRIGGER_EXCLUDED_TOKENS=200`, send many medium-length turns, then ask a follow-up. Backend logs should show `truncated=true`, a summarization call, and a reused summary on the next turn. Usage shows a `summarization` request.
+3. **Oversized message / failure:** paste a huge single user message under a tiny budget and confirm a clear error without truncating it; or force summarization failure (invalid `SUMMARIZATION_MODEL`) and confirm the chat still answers on the selected model with windowed history only.
+
+## Prompt caching (Phase 2.3)
+
+OpenAI caches the processed form of a prompt prefix and reuses it when a later request starts with the same tokens. Cached reads are billed at a fraction of the input rate and the model starts answering sooner. OperateSolve relies entirely on this automatic caching. It does not store responses, and there is no Redis or database cache.
+
+Facts below were checked on 2026-10-25 against OpenAI's [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching) and the [gpt-6-luna](https://developers.openai.com/api/docs/models/gpt-6-luna), [gpt-5-mini](https://developers.openai.com/api/docs/models/gpt-5-mini), and [gpt-5-nano](https://developers.openai.com/api/docs/models/gpt-5-nano) model pages.
+
+### How prompts are laid out
+
+Every request has the same shape, which is already cache-friendly:
+
+1. **`instructions`:** the fixed OperateSolve system prompt (`INSTRUCTIONS` in `chat_service.py`). It contains no timestamps, request ids, user names, or conversation ids, so it is byte-identical for every request.
+2. **Optional summary** of older turns (Phase 2.4), stable until the next summarization checkpoint.
+3. **History:** retained recent user and assistant turns from the sliding window, oldest first, resent exactly as stored.
+4. **The new user message**, last.
+
+Reasoning effort, `max_output_tokens`, and the cache settings are fixed per model, so they do not vary between turns. For short chats that fit the budget, each turn's prompt is still the previous turn's prompt plus the previous answer and the new question. A retry resends exactly the same prompt as the failed attempt. Tests in `backend/tests/test_prompt_caching.py` and `test_context_management.py` check this.
+
+On Luna, the implicit cache breakpoint sits at the end of the latest user message, and earlier user-message endings are lookup points. So turn 2 reads what turn 1 wrote, turn 3 reads what turn 2 wrote, and so on. The system prompt alone (about 120 tokens) is below the 1,024-token minimum, so the first message of a short new conversation is never a cache hit.
+
+### Per-model settings
+
+All cache settings live in one table in `backend/app/services/llm/prompt_cache.py`. The provider adds them to each Responses API call according to the routed model.
+
+| Model | Sent with each request | Why |
+| --- | --- | --- |
+| Luna `gpt-6-luna` | `prompt_cache_options: {"mode": "implicit", "ttl": "30m"}` | GPT-5.6-and-later behavior. These are the documented defaults, pinned so that the 30-minute write rate in `pricing.json` stays correct. Writes cost 1.25× input, reads 0.1× input. The minimum prefix is 1,024 tokens. `prompt_cache_key` only separates cache accounting on these models, so it is not sent. |
+| Nano `gpt-5-nano` | `prompt_cache_key: "operatesolve-chat-v1"` | Earlier model: caching is implicit at fixed intervals, with no write surcharge. A stable key helps route related requests to the same cache. `prompt_cache_options` is not supported, and Nano is not on the `24h` retention list, so `prompt_cache_retention` keeps its `in_memory` default. |
+| Mini `gpt-5-mini` | nothing | The model page lists a cached-input price but not `prompt_caching` as a supported feature, so no cache parameters are sent. Any cached tokens it reports are still recorded and priced. |
+
+Models not in the table get no cache parameters. Dated snapshots such as `gpt-5-nano-2025-08-07` use their base model's settings. Switching models mid-conversation starts a cold cache, because caches are per model.
+
+### Cost accounting
+
+The provider already copies `input_tokens_details.cached_tokens` and `input_tokens_details.cache_write_tokens` from each response into `llm_usage`. Both are subsets of `input_tokens`, and `cached_tokens` excludes writes, so each input token is billed at exactly one rate and writes are never counted twice (see [How cost is calculated](#how-cost-is-calculated)). Missing fields are stored as null: a missing cached count is priced as ordinary input and is left out of the hit rate.
+
+For the dashboard, each priced request also gets:
+
+```text
+uncached baseline   = input_tokens × input rate
+cache read savings  = cached_tokens × (input rate − cached_input rate)
+cache write overhead = cache_write_tokens × (cache_write rate − input rate)   # 0 for Mini/Nano
+net input savings   = read savings − write overhead = baseline − actual input cost
+cache hit rate      = cached_tokens ÷ input_tokens   (requests that reported a cached count)
+```
+
+The long-context tier, when it applies, is used for both the actual cost and the baseline. Rates in `pricing.json` are unchanged and were re-verified: Luna $0.10 input, $0.01 cached input, $0.125 cache write. Mini and Nano have cached-input rates and no cache-write rate.
+
+### On the dashboard
+
+**Usage & cost** has a **Prompt caching** card (marked Estimate) with the cache hit rate, cached-read tokens, cache-write tokens, net input savings split into read savings and write overhead, and the actual input cost next to the uncached baseline. Below it, a per-model table shows the same figures with average time to first token. **Recent requests** now also shows cache writes and first-token time per request. `GET /api/usage` returns these as `cache_hit_rate` and `estimated_*_usd` fields on every summary. The existing cost, model, routing, and conversation tables are unchanged.
+
+### Experiment: measure caching on Luna
+
+`backend/scripts/cache_experiment.py` makes a few small, billed calls through the app's own provider, instructions, and cache settings, using a synthetic runbook of about 2,600 tokens as the reusable prefix. It does not write to the database. From `backend`:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.cache_experiment                       # Luna, chat-style, 3 calls
+.\.venv\Scripts\python.exe -m scripts.cache_experiment --mode repeat         # identical prompt each call
+.\.venv\Scripts\python.exe -m scripts.cache_experiment --mode new-question   # shared runbook, new question, no history
+.\.venv\Scripts\python.exe -m scripts.cache_experiment --model nano          # compare an earlier model
+```
+
+Each run costs well under $0.001. For each call, the script prints input tokens, cached tokens, cache writes, hit rate, actual input cost, uncached baseline, savings, time to first token, and total time. A random run tag at the top of the prefix guarantees a cold first call. Pass `--reuse-prefix` to drop it and watch a rerun hit the previous run's cache.
+
+Results from one run on 2026-10-25 (`gpt-6-luna`, default conversation mode):
+
+| Call | Input | Cached | Writes | Hit | Input cost | Uncached | Saved | First token |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 2,622 | 0 | 2,619 | 0% | $0.0003277 | $0.0002622 | −$0.0000655 | 1,975 ms |
+| 2 | 2,676 | 2,619 | 54 | 98% | $0.0000332 | $0.0002676 | $0.0002344 | 984 ms |
+| 3 | 2,725 | 2,673 | 49 | 98% | $0.0000332 | $0.0002725 | $0.0002393 | 764 ms |
+
+What to expect:
+
+- **Call 1 costs about 25% more than uncached.** It writes the prefix at 1.25× input and reads nothing.
+- **Later calls read almost the whole prompt from cache**, writing only the new turn. Their input costs about 12% of uncached. Write once and read once already beats uncached (1.35× versus 2×).
+- **Time to first token usually drops**, roughly halving in this run. It is noisy, though: network and server load matter, and caching does not guarantee lower latency. Compare averages over several calls rather than single values.
+- **`new-question` mode on Luna gives 0 hits, by design.** The same run showed 0 cached and about 2,618 writes on both calls. The implicit breakpoint sits at the end of the user message, after the question, so the shared runbook on its own was never written. This is the guide's "a shared prefix is not always a cached prefix" case. Chat history does not have this problem, because earlier turns end at earlier user messages.
+
+If you see zero cache hits where you expected some, check these in order:
+
+1. **The prefix is too short.** Luna needs 1,024 visible tokens. Everyday one-line chats never qualify, which is why their hit rate is 0%.
+2. **The prefix changed.** Any edit before the breakpoint, such as a different system prompt, an edited earlier turn, or a different model or reasoning effort, makes a new prefix.
+3. **The cache expired.** Luna keeps entries at least 30 minutes after the last write or read. The Mini/Nano default `in_memory` retention usually lasts 5 to 10 minutes of inactivity.
+4. **Routing.** Caches live on individual machines, so an occasional miss is normal. Rerun once.
+5. **The breakpoint is in the wrong place**, as in `new-question` mode above.
+
+### Tradeoffs
+
+- **Implicit mode writes on every eligible Luna request.** A conversation that ends after one long message pays the 25% write premium and never reads it back. Explicit-only breakpoints could avoid writing content unlikely to be reused, but they need per-message bookkeeping. The POC keeps OpenAI's automatic behavior, and the dashboard's write-overhead figure shows what it costs.
+- **No 12-hour TTL and no prewarming.** Both cost more upfront (2.5× writes, or billed prewarm calls) and only pay off with long, stable shared prefixes, which OperateSolve does not have yet. A later RAG phase that adds large shared reference material can reconsider both.
+- **One app-wide cache key for Nano.** That is fine at single-operator traffic, far below OpenAI's guidance of about 15 requests per minute per key. A multi-tenant version would use per-tenant keys, which also prevent cross-tenant cache-hit probing.
+- **Mini gets no cache parameters**, because its model page does not list caching. If OpenAI documents it later, add a policy row.
+
+## Structured incident analysis (Phase 2.5A)
+
+Open **Incident analysis** in the sidebar (http://127.0.0.1:3000/incidents). Submit a fictional incident id and description. The API calls the baseline model with OpenAI Structured Outputs (`text_format=IncidentAnalysis`) and returns severity (P1–P4), summary, probable cause, recommended actions, and `requires_human_approval`. There is no fallback to free-form JSON when the schema fails.
+
+- Endpoint: `POST /api/incidents/analyze`
+- Usage rows use `purpose=incident_analysis` (shown as an **incident** tag on Usage → Recent requests)
+- Chat streaming, routing, caching, and summarization are unchanged
+
+## Parallel LLM experiment (Phase 2.5B)
+
+Open **LLM Experiments** (http://127.0.0.1:3000/experiments). Enter a fictional incident, then run **Sequential** and **Parallel** as separate executions of the same three independent tasks (root causes, business impact, remediation). The comparison table shows measured total latency, input/output tokens, estimated cost, and successful-task counts. Parallel mode can lower wall-clock latency; it does **not** reduce token cost.
+
+- Endpoint: `POST /api/experiments/parallel` with `mode: "sequential" | "parallel"`
+- Each task is one non-streaming `complete` call, recorded once under `purpose=parallel_experiment`
+- Bounded concurrency (`PARALLEL_EXPERIMENT_MAX_CONCURRENCY`, default 3) and per-task timeouts (`PARALLEL_EXPERIMENT_TIMEOUT_SECONDS`, default 60)
+- Partial failures and timeouts are returned per task; other tasks still complete
+
 ## Usage and cost dashboard
 
 Open **Usage & cost** in the sidebar (or http://127.0.0.1:3000/usage). It shows total requests, input, cached, and output tokens, estimated USD cost, average latency, a daily chart, and breakdowns by model, by routing decision, by conversation, and by recent request.
@@ -151,11 +305,12 @@ Bundled rates were checked against [OpenAI API pricing](https://developers.opena
 
 - Costs are **estimates**. OpenAI's billing dashboard and invoice are authoritative.
 - Standard tier only. Batch, Flex, Fast mode, regional data-residency uplifts, taxes, credits, and tool-call fees are not modeled. GPT-5.6 Sol is listed at OpenAI's current promotional price.
-- Cache writes are priced at the default 30-minute rate. OperateSolve does not request 12-hour cache retention, so a 12-hour write would be under-estimated.
+- Cache writes are priced at the 30-minute rate. OperateSolve pins Luna to `ttl: "30m"` and never requests 12-hour retention, so this matches what is billed. The per-lifetime breakdown (`cache_write_tokens_details`) is not stored.
+- Cache savings are estimates against a hypothetical all-uncached baseline. They exclude output tokens and the latency benefit.
 - Tokens from stopped or interrupted streams may still be billed by OpenAI, but no usage is reported for them, so totals can be slightly low. The dashboard shows how many requests are missing usage.
 - The OpenAI SDK retries some failed connections internally. Those retries count as one request.
 - Time to first token is measured from just before the provider request to the first text delta. It includes reasoning time and network latency.
-- Databases are upgraded automatically at startup (`PRAGMA user_version` 0 → 1 → 2). Version 2 adds the model preference to conversations and routing columns to messages and `llm_usage`. Older usage rows have no routing data and appear as "Before routing".
+- Databases are upgraded automatically at startup (`PRAGMA user_version` 0 → 1 → 2 → 3). Version 2 adds the model preference to conversations and routing columns to messages and `llm_usage`. Version 3 adds `conversation_summaries` and `llm_usage.purpose` (`chat` | `summarization` | `incident_analysis` | `parallel_experiment`). Older usage rows have no routing data and appear as "Before routing".
 - In the version 1 upgrade from Phase 1, existing assistant messages that have metrics are imported as `backfill` rows. Those rows have no cached-token detail, use the message's last update time as the request time, and keep only the final attempt of a retried message.
 - Usage rows remain after a conversation is deleted, so totals stay complete. They appear as "Deleted conversation".
 - Daily buckets use UTC dates.
@@ -236,6 +391,16 @@ cd backend
 .\.venv\Scripts\python.exe -c "import sqlite3; c=sqlite3.connect('data/operatesolve.db'); [print(r) for r in c.execute('select started_at, selection, task_mode, routing_mode, requested_model, model, status from llm_usage order by started_at desc limit 5')]"
 ```
 
+## Manual verification of prompt caching
+
+Each step costs a fraction of a cent.
+
+1. From `backend`, run `.\.venv\Scripts\python.exe -m scripts.cache_experiment`. Call 1 should show 0 cached and about 2,600 writes. Calls 2 and 3 should show a hit rate above 90%, a positive "saved" value, and usually a lower first-token time. If not, see the zero-hit checklist above and rerun once.
+2. Run it with `--mode new-question --calls 2`. Both calls should show 0 cached on Luna, which demonstrates the breakpoint-placement gotcha.
+3. In the app, start a Luna conversation and paste a long text (at least about 1,500 words, for example a runbook) with a question. Then ask two short follow-ups within a few minutes.
+4. Open **Usage & cost**. In **Recent requests**, the first message shows cache writes and 0 cached, and the follow-ups show most input as cached. The **Prompt caching** card shows a non-zero hit rate, read savings, and write overhead. Net savings turn positive once reads outweigh the first write.
+5. Check the logs: `generation_finished` lines include `cached_input_tokens` and `cache_write_tokens`.
+
 ## Troubleshooting
 
 | Symptom | What to do |
@@ -255,6 +420,8 @@ cd backend
 | Answers feel slow | Set `OPENAI_REASONING_EFFORT=none` and restart the API. |
 
 | Dashboard shows "usage missing" | That request stopped or failed before OpenAI reported usage. It is counted as a request with no tokens or cost. |
+| Cache hit rate is 0% | Normal for short chats: prompts under 1,024 tokens cannot be cached. See [Prompt caching](#prompt-caching-phase-23) for the checklist. |
+| Net cache savings are negative | Cache writes (1.25× input on Luna) have not been read back yet. Typical after single-message conversations with long prompts. |
 | Dashboard says a model is not in the pricing config | Add the model's rates to `backend/pricing.json` and restart the API. Its tokens are counted but not costed until then. |
 
 Logs include request ids, latency, token counts, and errors. They do not include the API key or message text. The SQLite file is `backend\data\operatesolve.db` and is gitignored.

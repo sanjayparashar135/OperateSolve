@@ -31,6 +31,30 @@ class Settings(BaseSettings):
     # Relative paths resolve from the backend directory.
     pricing_config_path: str = "pricing.json"
 
+    # Phase 2.4 — context budgeting (conservative vs full model windows).
+    # Soft input cap for chat prompts; still clamped per model max_input / context.
+    context_max_input_tokens: int = 24_000
+    # Multiply local token estimates when fitting history (heuristic is not exact).
+    context_token_safety_margin: float = 1.15
+    # Reserved inside the context window for assistant output + reasoning headroom.
+    context_reasoning_reserve_tokens: int = 1_024
+
+    # Phase 2.4 — conversation summarization (separate from the chat model).
+    summarization_enabled: bool = True
+    # Default to the current non-deprecated efficient model. Override if needed.
+    summarization_model: str = "gpt-6-luna"
+    summarization_max_output_tokens: int = 400
+    summarization_reasoning_effort: str = "low"
+    # Only call the summarizer when newly excluded history reaches this estimate.
+    summarization_trigger_excluded_tokens: int = 800
+    # Soft cap for the injected summary's estimated size when budgeting history.
+    summarization_summary_budget_tokens: int = 500
+
+    # Phase 2.5B — sequential vs parallel LLM experiment (learning only).
+    parallel_experiment_timeout_seconds: float = 60.0
+    parallel_experiment_max_concurrency: int = 3
+    parallel_experiment_max_output_tokens: int = 400
+
     @property
     def pricing_file(self) -> Path:
         path = Path(self.pricing_config_path)

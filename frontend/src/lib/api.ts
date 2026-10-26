@@ -1,10 +1,13 @@
 import type {
   Conversation,
   ConversationDetail,
+  ExperimentMode,
   Health,
+  IncidentAnalyzeResponse,
   Message,
   ModelCatalog,
   ModelPreference,
+  ParallelExperimentResponse,
   StreamHandlers,
   UsageReport,
 } from "@/lib/types";
@@ -67,6 +70,30 @@ export function getHealth(signal?: AbortSignal): Promise<Health> {
 export function getUsage(days: number | null, signal?: AbortSignal): Promise<UsageReport> {
   const query = days == null ? "" : `?days=${days}`;
   return request<UsageReport>(`/api/usage${query}`, { signal, cache: "no-store" });
+}
+
+export function analyzeIncident(
+  incidentId: string,
+  description: string,
+  signal?: AbortSignal,
+): Promise<IncidentAnalyzeResponse> {
+  return request<IncidentAnalyzeResponse>("/api/incidents/analyze", {
+    method: "POST",
+    body: JSON.stringify({ incident_id: incidentId, description }),
+    signal,
+  });
+}
+
+export function runParallelExperiment(
+  description: string,
+  mode: ExperimentMode,
+  signal?: AbortSignal,
+): Promise<ParallelExperimentResponse> {
+  return request<ParallelExperimentResponse>("/api/experiments/parallel", {
+    method: "POST",
+    body: JSON.stringify({ description, mode }),
+    signal,
+  });
 }
 
 export async function streamMessage(
@@ -142,6 +169,12 @@ async function readError(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { detail?: unknown };
     if (typeof body.detail === "string") return body.detail;
+    if (body.detail && typeof body.detail === "object" && !Array.isArray(body.detail)) {
+      const detail = body.detail as { message?: unknown; code?: unknown };
+      if (typeof detail.message === "string" && detail.message.trim()) {
+        return detail.message;
+      }
+    }
     if (Array.isArray(body.detail)) {
       const text = body.detail
         .map((item) => (item && typeof item === "object" && "msg" in item ? String(item.msg) : ""))

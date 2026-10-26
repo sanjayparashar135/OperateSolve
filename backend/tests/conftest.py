@@ -29,8 +29,9 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
 
 
 def make_service(settings: Settings, provider, repo: Repository) -> ChatService:
-    router = ModelRouter(build_registry(settings), reasoning_effort=settings.openai_reasoning_effort)
-    return ChatService(repo, provider, settings, router)
+    registry = build_registry(settings)
+    router = ModelRouter(registry, reasoning_effort=settings.openai_reasoning_effort)
+    return ChatService(repo, provider, settings, router, registry=registry)
 
 
 @pytest.fixture

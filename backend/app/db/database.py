@@ -172,7 +172,31 @@ def _add_model_routing(connection: sqlite3.Connection) -> None:
                 connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
-MIGRATIONS = [_add_usage_tracking, _add_model_routing]
+def _add_context_summaries(connection: sqlite3.Connection) -> None:
+    """Conversation summary checkpoints and chat vs summarization usage purpose."""
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_summaries (
+            conversation_id TEXT PRIMARY KEY,
+            summary_text TEXT NOT NULL,
+            covered_through_position INTEGER NOT NULL,
+            covered_through_message_id TEXT NOT NULL,
+            summary_tokens INTEGER,
+            model TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        )
+        """
+    )
+    usage_columns = {row["name"] for row in connection.execute("PRAGMA table_info(llm_usage)")}
+    if "purpose" not in usage_columns:
+        connection.execute(
+            "ALTER TABLE llm_usage ADD COLUMN purpose TEXT NOT NULL DEFAULT 'chat'"
+        )
+
+
+MIGRATIONS = [_add_usage_tracking, _add_model_routing, _add_context_summaries]
 
 
 def recover_interrupted(database_path: str) -> None:
