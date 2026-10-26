@@ -4,5 +4,7 @@ openai==3.37.0
 pydantic-settings==2.16.1
 python-dotenv==1.2.4
 httpx==0.28.1
+chromadb==1.0.20
+rank-bm25==0.2.2
 pytest==9.1.1
 pytest-asyncio==1.4.0

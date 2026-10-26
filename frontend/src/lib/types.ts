@@ -289,3 +289,78 @@ export type ParallelExperimentResponse = {
   tasks: ParallelTaskResult[];
   totals: ParallelExperimentTotals;
 };
+
+export type RetrievalMode = "semantic" | "hybrid";
+
+export type KnowledgeSearchHit = {
+  chunk_id: string;
+  document_id: string;
+  document_title: string;
+  source: string;
+  document_type: string;
+  section_heading: string;
+  content: string;
+  distance: number;
+  similarity: number;
+  rank: number;
+  bm25_score?: number | null;
+  rrf_score?: number | null;
+  semantic_rank?: number | null;
+  bm25_rank?: number | null;
+  retrieval_method?: string;
+};
+
+export type KnowledgeSearchResponse = {
+  query: string;
+  top_k: number;
+  embedding_model: string;
+  hit_count: number;
+  hits: KnowledgeSearchHit[];
+  retrieval_mode?: string;
+  reranker?: string;
+  semantic_candidates?: number;
+  bm25_candidates?: number;
+  retrieval_latency_ms?: number | null;
+};
+
+export type KnowledgeCitation = {
+  ref: string;
+  chunk_id: string;
+  document_id: string;
+  document_title: string;
+  source: string;
+  document_type: string;
+  section_heading: string;
+  content: string;
+  similarity: number;
+  rank: number;
+  bm25_score?: number | null;
+  rrf_score?: number | null;
+  retrieval_method?: string;
+};
+
+export type KnowledgeAskResponse = {
+  question: string;
+  answer: string;
+  citations: KnowledgeCitation[];
+  insufficient_context: boolean;
+  retrieved_count: number;
+  selected_count: number;
+  top_k: number;
+  model: string | null;
+  embedding_model: string;
+  request_id: string;
+  retrieval_latency_ms: number;
+  generation_latency_ms: number | null;
+  latency_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cached_input_tokens: number | null;
+  cache_write_tokens: number | null;
+  reasoning_tokens: number | null;
+  estimated_cost_usd: number | null;
+  embedding_tokens: number | null;
+  retrieval_mode?: string;
+  reranker?: string;
+  citation_note: string;
+};

@@ -51,6 +51,8 @@ class FakeProvider:
         self.parse_error_message = "The model request failed. You can retry."
         self.parse_refusal_message = "I'm sorry, I cannot assist with that request."
         self.parse_incomplete_reason = "max_output_tokens"
+        self.parse_delay_seconds: float = 0.0
+        self.parse_hang: bool = False
         # Phase 2.5B experiment controls for complete().
         self.complete_delay_seconds: float = 0.0
         self.complete_fail = False
@@ -185,6 +187,10 @@ class FakeProvider:
                 "max_output_tokens": max_output_tokens,
             }
         )
+        if self.parse_hang:
+            await asyncio.sleep(3600)
+        if self.parse_delay_seconds > 0:
+            await asyncio.sleep(self.parse_delay_seconds)
         usage = LLMUsage(
             input_tokens=self.parse_input_tokens,
             output_tokens=self.parse_output_tokens,

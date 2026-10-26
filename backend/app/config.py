@@ -55,6 +55,40 @@ class Settings(BaseSettings):
     parallel_experiment_max_concurrency: int = 3
     parallel_experiment_max_output_tokens: int = 400
 
+    # Phase 3.1 — RAG foundation (embeddings + ChromaDB).
+    knowledge_source_dir: str = "data/knowledge/source"
+    chroma_persist_directory: str = "data/knowledge/chroma"
+    chroma_collection_name: str = "operatesolve_knowledge"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+    embedding_batch_size: int = 64
+    rag_chunk_size_tokens: int = 500
+    rag_chunk_overlap_tokens: int = 75
+
+    # Phase 3.2 — grounded RAG answer generation (one LLM call per question).
+    # Empty string uses OPENAI_MODEL. Must support structured_outputs.
+    rag_answer_model: str = ""
+    rag_answer_max_output_tokens: int = 1200
+    rag_answer_reasoning_effort: str = "low"
+    rag_answer_timeout_seconds: float = 60.0
+    # Soft cap on selected chunk text in the prompt (local estimate, not billing).
+    rag_context_token_budget: int = 3500
+    # Drop retrieved chunks below this cosine similarity before generation.
+    # 0.0 disables filtering (default); raise only after retrieval eval.
+    rag_min_similarity: float = 0.0
+
+    # Phase 3.3 — hybrid retrieval (semantic + BM25 + RRF) and optional rerank.
+    # semantic = Phase 3.1/3.2 baseline; hybrid = semantic + BM25 fused with RRF.
+    # Keep semantic as default until hybrid is measured better on the eval set.
+    rag_retrieval_mode: str = "semantic"
+    rag_semantic_candidates: int = 20
+    rag_bm25_candidates: int = 20
+    rag_rrf_k: int = 60
+    rag_reranker_enabled: bool = False
+    # lexical_overlap = lightweight query-dependent local reranker (no extra API).
+    rag_reranker: str = "lexical_overlap"
+    bm25_index_path: str = "data/knowledge/bm25/index.json"
+
     @property
     def pricing_file(self) -> Path:
         path = Path(self.pricing_config_path)
@@ -71,6 +105,21 @@ class Settings(BaseSettings):
     @property
     def llm_configured(self) -> bool:
         return bool(self.openai_api_key.strip())
+
+    @property
+    def knowledge_source_path(self) -> Path:
+        path = Path(self.knowledge_source_dir)
+        return path if path.is_absolute() else BACKEND_DIR / path
+
+    @property
+    def chroma_path(self) -> Path:
+        path = Path(self.chroma_persist_directory)
+        return path if path.is_absolute() else BACKEND_DIR / path
+
+    @property
+    def bm25_path(self) -> Path:
+        path = Path(self.bm25_index_path)
+        return path if path.is_absolute() else BACKEND_DIR / path
 
 
 @lru_cache

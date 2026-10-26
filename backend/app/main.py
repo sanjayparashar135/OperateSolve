@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import chats, experiments, health, incidents, models, usage
+from app.api.routes import chats, experiments, health, incidents, knowledge, models, usage
 from app.config import Settings, get_settings
 from app.db.database import init_db
 from app.logging_config import configure_logging
@@ -18,6 +18,7 @@ from app.services.llm.factory import build_provider
 from app.services.llm.registry import MODEL_SPECS, ModelRegistry, check_access
 from app.services.model_router import ModelRouter
 from app.services.pricing import PricingConfigError, PricingTable, load_pricing
+from app.services.rag.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,10 @@ def create_app(
     settings: Settings | None = None,
     provider: LLMProvider | None = None,
     registry: ModelRegistry | None = None,
+    embedder: EmbeddingProvider | None = None,
+    vector_store=None,
+    bm25_index=None,
+    rag_reranker=None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level, [settings.openai_api_key.strip()])
@@ -58,12 +63,15 @@ def create_app(
         if state_settings.model_access_check and state_settings.llm_configured:
             await check_access(app.state.registry, app.state.provider)
         logger.info(
-            "startup baseline_model=%s provider=%s database=%s llm_configured=%s pricing_models=%s",
+            "startup baseline_model=%s provider=%s database=%s llm_configured=%s pricing_models=%s "
+            "rag_retrieval_mode=%s rag_reranker_enabled=%s",
             state_settings.openai_model,
             state_settings.llm_provider,
             state_settings.database_path,
             state_settings.llm_configured,
             len(app.state.pricing.models),
+            state_settings.rag_retrieval_mode,
+            state_settings.rag_reranker_enabled,
         )
         for status in app.state.registry.statuses():
             logger.info(
@@ -83,6 +91,10 @@ def create_app(
     app.state.provider = provider or build_provider(settings)
     app.state.registry = registry
     app.state.router = ModelRouter(registry, reasoning_effort=settings.openai_reasoning_effort)
+    app.state.embedder = embedder
+    app.state.vector_store = vector_store
+    app.state.bm25_index = bm25_index
+    app.state.rag_reranker = rag_reranker
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -96,6 +108,7 @@ def create_app(
     app.include_router(usage.router)
     app.include_router(incidents.router)
     app.include_router(experiments.router)
+    app.include_router(knowledge.router)
 
     @app.get("/")
     def root() -> dict[str, str]:

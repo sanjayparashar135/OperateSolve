@@ -1,6 +1,6 @@
 # OperateSolve
 
-OperateSolve is a local AI copilot for enterprise operations. Phase 1 is a dark, multi-turn chat workspace: conversations persist in SQLite, replies stream from the OpenAI Responses API, and each answer shows model, latency, and token usage. **Phase 2 is complete** (see [`PHASE2_COMPLETION.md`](PHASE2_COMPLETION.md)): usage and cost dashboard (2.1), per-conversation model selection with deterministic routing (2.2), prompt-cache tuning and measurement (2.3), model-aware context budgets with summarization (2.4), schema-enforced incident analysis (2.5A), and a sequential-vs-parallel LLM experiment (2.5B).
+OperateSolve is a local AI copilot for enterprise operations. Phase 1 is a dark, multi-turn chat workspace: conversations persist in SQLite, replies stream from the OpenAI Responses API, and each answer shows model, latency, and token usage. **Phase 2 is complete** (see [`PHASE2_COMPLETION.md`](PHASE2_COMPLETION.md)): usage and cost dashboard (2.1), per-conversation model selection with deterministic routing (2.2), prompt-cache tuning and measurement (2.3), model-aware context budgets with summarization (2.4), schema-enforced incident analysis (2.5A), and a sequential-vs-parallel LLM experiment (2.5B). **Phase 3 is complete** (see [`PHASE3_COMPLETION.md`](PHASE3_COMPLETION.md)): RAG foundation (3.1), grounded answers with citations (3.2), and hybrid retrieval quality + evaluation (3.3). Default retrieval remains **semantic** until hybrid beats it on measured metrics.
 
 The OpenAI API key stays in `backend/.env`. The browser only talks to the local FastAPI server.
 
@@ -8,7 +8,7 @@ The OpenAI API key stays in `backend/.env`. The browser only talks to the local 
 
 ```text
 frontend/   Next.js App Router, TypeScript, Tailwind, shadcn/ui
-backend/    FastAPI, SQLite, OpenAI Responses streaming
+backend/    FastAPI, SQLite, OpenAI Responses streaming, ChromaDB + BM25 (RAG)
 ```
 
 ```mermaid
@@ -20,6 +20,9 @@ flowchart LR
   Service --> DB["SQLite"]
   Service --> Provider["LLM provider"]
   Provider --> OpenAI["OpenAI Responses API"]
+  API --> RAG["RAG retrieve"]
+  RAG --> Chroma["ChromaDB"]
+  RAG --> BM25["BM25 index"]
 ```
 
 Request flow:
@@ -45,7 +48,11 @@ Layers, so later phases can plug in without rewriting the chat route:
 | Context & summaries | `backend/app/services/context/` | Token budgets, sliding-window history, incremental summarization (Phase 2.4) |
 | Incident analysis | `backend/app/services/incident_service.py`, `/incidents` | Schema-enforced Structured Outputs (Phase 2.5A) |
 | LLM experiments | `backend/app/services/parallel_experiment_service.py`, `/experiments` | Sequential vs parallel latency demo (Phase 2.5B) |
-| Future RAG, agents, MCP, auth | `backend/app/extensions.py` | Hooks are called and currently no-op |
+| RAG foundation | `backend/app/services/rag/`, `/knowledge`, `scripts/ingest_knowledge.py` | Ingest → chunk → embed → Chroma → semantic search (Phase 3.1) |
+| Grounded RAG answers | `backend/app/services/rag/answer.py`, `POST /api/knowledge/ask` | Retrieve → select → structured generate → cite (Phase 3.2) |
+| Hybrid retrieval | `retrieve.py`, `bm25.py`, `fusion.py`, `rerank.py` | Semantic + BM25 + RRF; optional local lexical rerank (off by default) (Phase 3.3) |
+| RAG evaluation | `scripts/eval_retrieval.py`, `scripts/eval_rag_answer.py`, `data/knowledge/eval/` | Recall/MRR/Precision + answer checks; see `PHASE3_COMPLETION.md` |
+| Future agents, MCP, auth, chat RAG memory | `backend/app/extensions.py` | Conversational RAG memory not yet wired into chat |
 
 The default and baseline model is `gpt-6-luna`. `OPENAI_REASONING_EFFORT` defaults to `low` so replies stay responsive. Set it to `none` for the lowest latency and cost, or `medium` for deeper answers. Output token counts include reasoning tokens when the API reports them that way. If usage is missing, the UI shows "usage unavailable" instead of inventing numbers.
 
@@ -361,6 +368,35 @@ cd frontend
 npm install
 npm run dev -- --hostname 127.0.0.1 --port 3000
 ```
+
+## Knowledge base (Phase 3)
+
+Synthetic Northstar Commerce docs live in `backend/data/knowledge/source/`. Ingest embeds changed docs into Chroma and rebuilds the local BM25 sidecar (unchanged docs are skipped):
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m scripts.ingest_knowledge
+.\.venv\Scripts\python.exe -m scripts.ingest_knowledge --dry-run
+.\.venv\Scripts\python.exe -m scripts.eval_retrieval --modes semantic,hybrid,hybrid_rerank
+.\.venv\Scripts\python.exe -m scripts.eval_rag_answer --retrieval-only --modes semantic,hybrid
+# Live answer eval (billed generation + embeddings):
+.\.venv\Scripts\python.exe -m scripts.eval_rag_answer --modes semantic,hybrid
+```
+
+Pipeline: User question → query embedding → **semantic** and/or **BM25** → **RRF** (hybrid) → optional local rerank (off) → context selection → one structured LLM answer → citations.
+
+Retrieval modes on `POST /api/knowledge/search` and `POST /api/knowledge/ask`:
+
+| Mode | Meaning |
+| --- | --- |
+| `semantic` | Vector search only (default; Phase 3.1/3.2 baseline) |
+| `hybrid` | Semantic + BM25 fused with Reciprocal Rank Fusion |
+
+Measured on the v2 eval set (25 scored questions): semantic Recall@5 **0.960**, MRR@5 **0.883**; hybrid Recall@5 **0.960**, MRR@5 **0.890** with lower labeled Precision@5. Lexical rerank reached Recall@5 **1.000** but dropped MRR@5 to **0.737**, so it stays disabled. Full results and the default-strategy rationale are in [`PHASE3_COMPLETION.md`](PHASE3_COMPLETION.md).
+
+Knowledge UI: http://localhost:3000/knowledge — **Search Documents** / **Ask Knowledge**, with a Semantic / Hybrid selector and per-hit similarity, BM25, and RRF scores. Answers use one schema-enforced LLM call, cite `[S#]` sources, and reject fabricated citation labels. Citation validation checks reference integrity only; it does not prove factual grounding.
+
+Config knobs (see `backend/.env.example`): `RAG_RETRIEVAL_MODE`, `RAG_SEMANTIC_CANDIDATES`, `RAG_BM25_CANDIDATES`, `RAG_RRF_K`, `RAG_RERANKER_ENABLED`, `BM25_INDEX_PATH`.
 
 ## Checks
 

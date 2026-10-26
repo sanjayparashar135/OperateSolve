@@ -1,0 +1,239 @@
+{
+  "name": "northstar-retrieval-v2",
+  "description": "Phase 3.1–3.3 evaluation. expected_document_ids are source document_id values (filename stems). Recall@K is binary: any expected id in the top K. MRR@K uses the first expected document's reciprocal rank. Precision@K is computed only when relevant_document_ids is provided (graded relevance). expected_answer_facts are deterministic substrings for answer eval (not proof of factual accuracy). unanswerable questions expect abstention. category tags guide analysis; they do not change metrics.",
+  "metric": "recall_at_5",
+  "questions": [
+    {
+      "id": "q01",
+      "query": "How do we recover the Order Management API after database connection exhaustion?",
+      "expected_document_ids": [
+        "oms-db-connection-exhaustion-runbook",
+        "inc-2407-oms-connection-postmortem"
+      ],
+      "expected_answer_facts": ["idle in transaction", "scale"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q02",
+      "query": "What is the synchronous checkout request path across Northstar services?",
+      "expected_document_ids": ["architecture-overview"],
+      "expected_answer_facts": ["OMS", "Payment"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q03",
+      "query": "How do I create an order with the OMS REST API and which idempotency header is required?",
+      "expected_document_ids": ["oms-api-specification"],
+      "expected_answer_facts": ["Idempotency"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q04",
+      "query": "What caused INC-2407 and which corrective actions followed the OMS outage?",
+      "expected_document_ids": ["inc-2407-oms-connection-postmortem"],
+      "expected_answer_facts": ["INC-2407"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q05",
+      "query": "AcmePay timeouts are returning payment_upstream_error — how do we troubleshoot PGA?",
+      "expected_document_ids": ["payment-gateway-troubleshooting"],
+      "expected_answer_facts": ["payment_upstream_error"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q06",
+      "query": "OMS returns inventory_unavailable — how do we recover IRS hard reservations?",
+      "expected_document_ids": ["inventory-reservation-runbook"],
+      "expected_answer_facts": ["inventory_unavailable"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q07",
+      "query": "How do we roll back a bad OMS production deploy in Argo CD?",
+      "expected_document_ids": ["deployment-rollback-procedures"],
+      "expected_answer_facts": ["Argo"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q08",
+      "query": "Customer was charged but has no order — what should L1 support do?",
+      "expected_document_ids": ["operational-support-guidelines", "payment-gateway-troubleshooting"],
+      "expected_answer_facts": ["void", "order"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q09",
+      "query": "Tracking number missing after order confirmed — Shipping Orchestrator steps?",
+      "expected_document_ids": ["shipping-orchestrator-guide"],
+      "expected_answer_facts": ["tracking"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q10",
+      "query": "How does CIS session validation work for OMS create-order and offline JWKS?",
+      "expected_document_ids": ["customer-identity-service"],
+      "expected_answer_facts": ["JWKS"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q11",
+      "query": "Should we scale OMS replicas when Postgres connections are saturated?",
+      "expected_document_ids": [
+        "oms-db-connection-exhaustion-runbook",
+        "inc-2407-oms-connection-postmortem"
+      ],
+      "expected_answer_facts": ["scale"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q12",
+      "query": "What Kafka topics does order confirmation publish for shipping and notifications?",
+      "expected_document_ids": ["architecture-overview", "shipping-orchestrator-guide"],
+      "expected_answer_facts": ["order.confirmed"],
+      "unanswerable": false,
+      "category": "baseline"
+    },
+    {
+      "id": "q13",
+      "query": "What is the CEO of Northstar Commerce's personal phone number?",
+      "expected_document_ids": [],
+      "expected_answer_facts": [],
+      "unanswerable": true,
+      "category": "unanswerable"
+    },
+    {
+      "id": "q14",
+      "query": "INC-2407",
+      "expected_document_ids": ["inc-2407-oms-connection-postmortem"],
+      "relevant_document_ids": ["inc-2407-oms-connection-postmortem", "oms-db-connection-exhaustion-runbook"],
+      "expected_answer_facts": ["INC-2407"],
+      "unanswerable": false,
+      "category": "exact_incident_id"
+    },
+    {
+      "id": "q15",
+      "query": "What does PGA stand for and how does it relate to AcmePay?",
+      "expected_document_ids": ["payment-gateway-troubleshooting", "architecture-overview"],
+      "expected_answer_facts": ["Payment", "AcmePay"],
+      "unanswerable": false,
+      "category": "acronym"
+    },
+    {
+      "id": "q16",
+      "query": "IRS soft hold vs hard reserve TTL and which OMS call creates the hard reservation?",
+      "expected_document_ids": ["inventory-reservation-runbook"],
+      "expected_answer_facts": ["hold", "reservation"],
+      "unanswerable": false,
+      "category": "acronym"
+    },
+    {
+      "id": "q17",
+      "query": "POST /v1/orders Idempotency-Key requirements",
+      "expected_document_ids": ["oms-api-specification"],
+      "relevant_document_ids": ["oms-api-specification"],
+      "expected_answer_facts": ["Idempotency"],
+      "unanswerable": false,
+      "category": "api_endpoint"
+    },
+    {
+      "id": "q18",
+      "query": "GET /v1/customers/{customer_id}/orders scope oms.support.read",
+      "expected_document_ids": ["oms-api-specification"],
+      "expected_answer_facts": ["oms.support.read"],
+      "unanswerable": false,
+      "category": "api_endpoint"
+    },
+    {
+      "id": "q19",
+      "query": "HTTP 503 oms_overloaded recovery steps",
+      "expected_document_ids": ["oms-db-connection-exhaustion-runbook"],
+      "relevant_document_ids": [
+        "oms-db-connection-exhaustion-runbook",
+        "inc-2407-oms-connection-postmortem"
+      ],
+      "expected_answer_facts": ["oms_overloaded"],
+      "unanswerable": false,
+      "category": "error_code"
+    },
+    {
+      "id": "q20",
+      "query": "invalid_lines vs unauthorized vs inventory_unavailable OMS error codes",
+      "expected_document_ids": ["oms-api-specification"],
+      "expected_answer_facts": ["invalid_lines", "unauthorized"],
+      "unanswerable": false,
+      "category": "error_code"
+    },
+    {
+      "id": "q21",
+      "query": "Checkout is failing because the database connection pool looks full — what should on-call do first?",
+      "expected_document_ids": [
+        "oms-db-connection-exhaustion-runbook",
+        "inc-2407-oms-connection-postmortem"
+      ],
+      "expected_answer_facts": ["idle", "scale"],
+      "unanswerable": false,
+      "category": "semantic_paraphrase"
+    },
+    {
+      "id": "q22",
+      "query": "Shopper paid successfully but the order never showed up in their account history",
+      "expected_document_ids": ["operational-support-guidelines", "payment-gateway-troubleshooting"],
+      "expected_answer_facts": ["void", "order"],
+      "unanswerable": false,
+      "category": "semantic_paraphrase"
+    },
+    {
+      "id": "q23",
+      "query": "How do OMS, PGA, and IRS interact during create-order when payment and inventory both succeed?",
+      "expected_document_ids": ["architecture-overview", "oms-api-specification", "inventory-reservation-runbook"],
+      "expected_answer_facts": ["OMS", "Payment"],
+      "unanswerable": false,
+      "category": "cross_document"
+    },
+    {
+      "id": "q24",
+      "query": "After order.confirmed, how does SHO attach tracking back to OMS?",
+      "expected_document_ids": ["shipping-orchestrator-guide", "architecture-overview"],
+      "expected_answer_facts": ["tracking", "order.confirmed"],
+      "unanswerable": false,
+      "category": "cross_document"
+    },
+    {
+      "id": "q25",
+      "query": "What is the private Slack channel for Northstar board compensation discussions?",
+      "expected_document_ids": [],
+      "expected_answer_facts": [],
+      "unanswerable": true,
+      "category": "unanswerable"
+    },
+    {
+      "id": "q26",
+      "query": "POST /v1/sessions/validate and oms_cis_offline_jwks feature flag",
+      "expected_document_ids": ["customer-identity-service"],
+      "relevant_document_ids": ["customer-identity-service"],
+      "expected_answer_facts": ["JWKS", "oms_cis_offline_jwks"],
+      "unanswerable": false,
+      "category": "api_endpoint"
+    },
+    {
+      "id": "q27",
+      "query": "Argo CD retarget previous known-good image tag for OMS rollback",
+      "expected_document_ids": ["deployment-rollback-procedures"],
+      "expected_answer_facts": ["Argo"],
+      "unanswerable": false,
+      "category": "exact_keyword"
+    }
+  ]
+}

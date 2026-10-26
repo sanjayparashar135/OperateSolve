@@ -24,6 +24,12 @@ backend/.venv/
 *.sqlite3
 backend/data/*
 !backend/data/.gitkeep
+!backend/data/knowledge/
+!backend/data/knowledge/**
+backend/data/knowledge/chroma/
+backend/data/knowledge/chroma/**
+backend/data/knowledge/bm25/
+backend/data/knowledge/bm25/**
 
 # Node
 node_modules/

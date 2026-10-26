@@ -2,7 +2,14 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { ChartColumnIcon, EllipsisIcon, FlaskConicalIcon, PlusIcon, ShieldAlertIcon } from "lucide-react";
+import {
+  ChartColumnIcon,
+  EllipsisIcon,
+  FlaskConicalIcon,
+  LibraryIcon,
+  PlusIcon,
+  ShieldAlertIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -110,6 +117,10 @@ export function Sidebar({
         <Link href="/incidents" className="nav-link">
           <ShieldAlertIcon />
           Incident analysis
+        </Link>
+        <Link href="/knowledge" className="nav-link">
+          <LibraryIcon />
+          Knowledge search
         </Link>
         <Link href="/experiments" className="nav-link">
           <FlaskConicalIcon />

@@ -413,7 +413,15 @@ class Repository:
         reported = 1 if input_tokens is not None and output_tokens is not None else 0
         purpose_value = (
             purpose
-            if purpose in {"chat", "summarization", "incident_analysis", "parallel_experiment"}
+            if purpose
+            in {
+                "chat",
+                "summarization",
+                "incident_analysis",
+                "parallel_experiment",
+                "embedding",
+                "rag_answer",
+            }
             else "chat"
         )
         with connect(self.database_path) as connection:

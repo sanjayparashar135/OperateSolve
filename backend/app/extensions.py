@@ -1,15 +1,15 @@
 """Extension points for later phases.
 
 Phase 1 calls these hooks and keeps them side-effect free.
-Retrieval, agents, MCP, and authentication can plug in here
-without changing the chat route contract.
+Phase 3.2 grounded answers live on /api/knowledge/ask (not chat memory).
+Agents, MCP, and authentication can plug in here later.
 """
 
 
 def augment_instructions(instructions: str, *, conversation_id: str) -> str:
     """Return the system instructions for a turn.
 
-    A later RAG or agent phase can append retrieved context here.
+    Conversational RAG memory can append retrieved context here in a later phase.
     """
 
     del conversation_id

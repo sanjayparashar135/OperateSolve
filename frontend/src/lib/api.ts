@@ -4,6 +4,8 @@ import type {
   ExperimentMode,
   Health,
   IncidentAnalyzeResponse,
+  KnowledgeAskResponse,
+  KnowledgeSearchResponse,
   Message,
   ModelCatalog,
   ModelPreference,
@@ -92,6 +94,32 @@ export function runParallelExperiment(
   return request<ParallelExperimentResponse>("/api/experiments/parallel", {
     method: "POST",
     body: JSON.stringify({ description, mode }),
+    signal,
+  });
+}
+
+export function searchKnowledge(
+  query: string,
+  topK = 5,
+  signal?: AbortSignal,
+  retrievalMode: "semantic" | "hybrid" = "semantic",
+): Promise<KnowledgeSearchResponse> {
+  return request<KnowledgeSearchResponse>("/api/knowledge/search", {
+    method: "POST",
+    body: JSON.stringify({ query, top_k: topK, retrieval_mode: retrievalMode }),
+    signal,
+  });
+}
+
+export function askKnowledge(
+  question: string,
+  topK = 5,
+  signal?: AbortSignal,
+  retrievalMode: "semantic" | "hybrid" = "semantic",
+): Promise<KnowledgeAskResponse> {
+  return request<KnowledgeAskResponse>("/api/knowledge/ask", {
+    method: "POST",
+    body: JSON.stringify({ question, top_k: topK, retrieval_mode: retrievalMode }),
     signal,
   });
 }
