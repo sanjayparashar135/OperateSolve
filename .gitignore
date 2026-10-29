@@ -6,14 +6,8 @@ backend/.env
 frontend/.env.local
 frontend/.env.*.local
 
-# Cloudflare Tunnel (tokens, credentials, local config — never commit)
-.cloudflared/
-**/.cloudflared/
-cloudflared*.json
-*tunnel*.json
-*.pem
-
 # Python
+
 backend/.venv/
 **/__pycache__/
 **/*.py[cod]

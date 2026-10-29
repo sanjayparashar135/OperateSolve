@@ -446,7 +446,6 @@ Each step costs a fraction of a cent.
 | Banner says the API key is missing | Edit `backend\.env`, set `OPENAI_API_KEY`, and restart the API window. The Next.js app does not read this value. |
 | Banner says the API is unreachable | Confirm http://127.0.0.1:8000/api/health and http://127.0.0.1:3000/api/health both return JSON. The UI uses same-origin `/api/*` (Next.js proxies to FastAPI). |
 | Port 3000 or 8000 is already in use | The startup script skips a service that is already listening. Close the old window or change the port in the startup command and `CORS_ORIGINS` / `BACKEND_URL` if needed. |
-| Temporary remote access | See [`REMOTE_DEMO_SETUP.md`](REMOTE_DEMO_SETUP.md). Tunnel only the frontend (:3000); keep FastAPI on `127.0.0.1:8000`. |
 | Model not found, or 403 | Your project cannot use that model. Pick another model in the selector, or add it to `DISABLED_MODELS` in `backend\.env` and restart the API. The startup access check marks such models unavailable automatically. |
 | "… is unavailable" when sending | The conversation is set to a model that is disabled, retired, or inaccessible. Choose another model in the selector; the reason is shown next to the model. |
 | API will not start: "OPENAI_MODEL … is not a registered model" | `OPENAI_MODEL` is the Auto fallback and must be `gpt-6-luna`, `gpt-5-mini`, or `gpt-5-nano`. |

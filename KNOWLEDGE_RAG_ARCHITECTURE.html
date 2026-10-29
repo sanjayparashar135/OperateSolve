@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OperateSolve — Knowledge Ingestion &amp; Retrieval Architecture</title>
+  <style>
+    :root {
+      --ink: #0f172a;
+      --muted: #475569;
+      --line: #cbd5e1;
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --ingest: #0f766e;
+      --ingest-soft: #ccfbf1;
+      --ingest-mid: #14b8a6;
+      --retrieve: #1d4ed8;
+      --retrieve-soft: #dbeafe;
+      --retrieve-mid: #3b82f6;
+      --optimize: #b45309;
+      --optimize-soft: #ffedd5;
+      --optimize-mid: #f59e0b;
+      --store: #6d28d9;
+      --store-soft: #ede9fe;
+      --llm: #be123c;
+      --llm-soft: #ffe4e6;
+      --ok: #15803d;
+      --shadow: 0 1px 2px rgb(15 23 42 / 6%), 0 8px 24px rgb(15 23 42 / 6%);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, #ecfeff 0%, transparent 55%),
+        radial-gradient(1000px 500px at 90% 0%, #eff6ff 0%, transparent 50%),
+        radial-gradient(800px 400px at 50% 100%, #fff7ed 0%, transparent 45%),
+        var(--bg);
+      line-height: 1.45;
+    }
+
+    .page {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+
+    header.hero {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 28px;
+      padding: 28px 32px;
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 55%, #0f766e 100%);
+      color: #f8fafc;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+    }
+    header.hero h1 {
+      margin: 0;
+      font-size: 1.75rem;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+    header.hero p {
+      margin: 0;
+      max-width: 72ch;
+      color: #cbd5e1;
+      font-size: 0.98rem;
+    }
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: rgb(255 255 255 / 12%);
+      border: 1px solid rgb(255 255 255 / 18%);
+      color: #e2e8f0;
+    }
+    .badge i {
+      width: 8px; height: 8px; border-radius: 50%;
+      display: inline-block;
+    }
+
+    .legend {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .swatch {
+      width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0;
+    }
+
+    section.lane {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+      overflow: hidden;
+    }
+    .lane-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .lane-head h2 {
+      margin: 0 0 4px;
+      font-size: 1.15rem;
+      letter-spacing: -0.015em;
+    }
+    .lane-head p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+      max-width: 70ch;
+    }
+    .lane-tag {
+      flex-shrink: 0;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 6px 10px;
+      border-radius: 8px;
+    }
+    .lane-ingest .lane-tag { background: var(--ingest-soft); color: var(--ingest); }
+    .lane-retrieve .lane-tag { background: var(--retrieve-soft); color: var(--retrieve); }
+    .lane-optimize .lane-tag { background: var(--optimize-soft); color: var(--optimize); }
+    .lane-bridge .lane-tag { background: var(--store-soft); color: var(--store); }
+
+    .lane-body { padding: 20px 22px 24px; }
+
+    /* Flow rows */
+    .flow {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: stretch;
+      gap: 0;
+      justify-content: flex-start;
+    }
+    .node {
+      position: relative;
+      min-width: 140px;
+      max-width: 200px;
+      flex: 1 1 140px;
+      background: #fff;
+      border: 1.5px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .node.wide { max-width: none; flex: 1 1 220px; }
+    .node.accent-ingest { border-color: #99f6e4; background: linear-gradient(180deg, #f0fdfa, #fff); }
+    .node.accent-retrieve { border-color: #bfdbfe; background: linear-gradient(180deg, #eff6ff, #fff); }
+    .node.accent-store { border-color: #ddd6fe; background: linear-gradient(180deg, #f5f3ff, #fff); }
+    .node.accent-llm { border-color: #fecdd3; background: linear-gradient(180deg, #fff1f2, #fff); }
+    .node.accent-opt { border-color: #fed7aa; background: linear-gradient(180deg, #fffbeb, #fff); }
+    .node.decision {
+      border-style: dashed;
+      border-color: var(--retrieve-mid);
+      background: #eff6ff;
+    }
+    .node h3 {
+      margin: 0;
+      font-size: 0.82rem;
+      font-weight: 650;
+      color: var(--ink);
+      line-height: 1.3;
+    }
+    .node ul {
+      margin: 0;
+      padding-left: 1.05rem;
+      color: var(--muted);
+      font-size: 0.72rem;
+    }
+    .node ul li { margin-bottom: 2px; }
+    .node .step {
+      align-self: flex-start;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      color: #334155;
+    }
+    .node.accent-ingest .step { background: var(--ingest-soft); color: var(--ingest); }
+    .node.accent-retrieve .step { background: var(--retrieve-soft); color: var(--retrieve); }
+    .node.accent-store .step { background: var(--store-soft); color: var(--store); }
+    .node.accent-llm .step { background: var(--llm-soft); color: var(--llm); }
+    .node.accent-opt .step { background: var(--optimize-soft); color: var(--optimize); }
+
+    .arrow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      flex: 0 0 28px;
+      color: #94a3b8;
+      font-size: 1.1rem;
+      font-weight: 700;
+      align-self: center;
+    }
+    .arrow span {
+      display: inline-block;
+      transform: translateY(-1px);
+    }
+
+    .subflow {
+      margin-top: 18px;
+      padding: 16px;
+      border-radius: 12px;
+      border: 1px dashed #94a3b8;
+      background: #f8fafc;
+    }
+    .subflow h4 {
+      margin: 0 0 12px;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .intent-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    @media (max-width: 900px) {
+      .intent-grid { grid-template-columns: 1fr; }
+      .arrow { width: 100%; flex-basis: 100%; height: 22px; }
+      .arrow span { transform: rotate(90deg); }
+    }
+
+    .intent-card {
+      border-radius: 12px;
+      border: 1.5px solid var(--line);
+      padding: 14px;
+      background: #fff;
+    }
+    .intent-card h5 {
+      margin: 0 0 8px;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .intent-card p, .intent-card ol {
+      margin: 0;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .intent-card ol { padding-left: 1.1rem; }
+    .intent-card ol li { margin-bottom: 4px; }
+    .pill {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 999px;
+    }
+    .pill-a { background: #e2e8f0; color: #334155; }
+    .pill-b { background: var(--retrieve-soft); color: var(--retrieve); }
+    .pill-c { background: var(--store-soft); color: var(--store); }
+
+    .metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .metric {
+      font-size: 0.7rem;
+      font-weight: 650;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: #f1f5f9;
+      color: #334155;
+      border: 1px solid #e2e8f0;
+    }
+
+    .opt-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .opt-card {
+      border: 1.5px solid #fed7aa;
+      background: linear-gradient(180deg, #fffbeb, #fff);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .opt-card h3 {
+      margin: 0 0 6px;
+      font-size: 0.88rem;
+      color: var(--optimize);
+    }
+    .opt-card p {
+      margin: 0;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .opt-card .where {
+      margin-top: 8px;
+      font-size: 0.68rem;
+      font-weight: 650;
+      color: #92400e;
+    }
+
+    .bridge {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 16px;
+      align-items: center;
+    }
+    @media (max-width: 800px) {
+      .bridge { grid-template-columns: 1fr; }
+    }
+    .store-box {
+      border: 2px solid #c4b5fd;
+      background: linear-gradient(135deg, #f5f3ff, #fff);
+      border-radius: 14px;
+      padding: 18px;
+    }
+    .store-box h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+      color: var(--store);
+    }
+    .store-layers {
+      display: grid;
+      gap: 6px;
+    }
+    .store-layer {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 8px 10px;
+      background: #fff;
+      border: 1px solid #e9e5ff;
+      border-radius: 8px;
+      font-size: 0.78rem;
+    }
+    .store-layer strong {
+      min-width: 88px;
+      color: var(--store);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .store-layer span { color: var(--muted); }
+
+    .connector {
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .connector .big {
+      font-size: 1.6rem;
+      color: var(--store);
+      line-height: 1;
+      margin-bottom: 4px;
+    }
+
+    footer.notes {
+      margin-top: 8px;
+      padding: 16px 18px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+    footer.notes strong { color: var(--ink); }
+
+    /* Mermaid-alternative: stacked pipeline for print */
+    @media print {
+      body { background: #fff; }
+      header.hero { box-shadow: none; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .lane { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>OperateSolve Knowledge Architecture</h1>
+      <p>
+        End-to-end learning diagram: continuous asynchronous knowledge ingestion into a permission-aware
+        vector store, plus intent-routed retrieval with hybrid search, reranking, and cost/latency
+        optimization layers (routing, prompt caching, context budgeting, parallel calls).
+      </p>
+      <div class="badge-row">
+        <span class="badge"><i style="background:#2dd4bf"></i> Ingestion Pipeline</span>
+        <span class="badge"><i style="background:#60a5fa"></i> Retrieval &amp; RAG</span>
+        <span class="badge"><i style="background:#c084fc"></i> Vector Store Hub</span>
+        <span class="badge"><i style="background:#fb923c"></i> Cost &amp; Efficiency Layer</span>
+      </div>
+    </header>
+
+    <div class="legend" aria-label="Legend">
+      <div class="legend-item"><span class="swatch" style="background:var(--ingest)"></span> Knowledge Ingestion (async / continuous)</div>
+      <div class="legend-item"><span class="swatch" style="background:var(--retrieve)"></span> Knowledge Retrieval (request path)</div>
+      <div class="legend-item"><span class="swatch" style="background:var(--store)"></span> Shared Vector Store</div>
+      <div class="legend-item"><span class="swatch" style="background:var(--llm)"></span> LLM / Embedding Models</div>
+      <div class="legend-item"><span class="swatch" style="background:var(--optimize)"></span> Optimization (cost, speed, quality)</div>
+    </div>
+
+    <!-- ===================== INGESTION ===================== -->
+    <section class="lane lane-ingest" aria-labelledby="ingest-title">
+      <div class="lane-head">
+        <div>
+          <h2 id="ingest-title">1. Knowledge Ingestion Pipeline</h2>
+          <p>Continuous, asynchronous pipeline that keeps the knowledge base fresh via connectors, APIs, webhooks, and incremental change tracking.</p>
+        </div>
+        <span class="lane-tag">Write path · Offline / async</span>
+      </div>
+      <div class="lane-body">
+        <div class="flow" role="list">
+          <article class="node accent-ingest" role="listitem">
+            <span class="step">1 · Sources</span>
+            <h3>Source Connectors</h3>
+            <ul>
+              <li>Document / wiki APIs</li>
+              <li>Webhooks (push events)</li>
+              <li>Scheduled crawls</li>
+              <li>Incremental change tracking (cursors, etags, watermarks)</li>
+            </ul>
+          </article>
+          <div class="arrow" aria-hidden="true"><span>→</span></div>
+          <article class="node accent-ingest" role="listitem">
+            <span class="step">2 · Normalize</span>
+            <h3>Parsing + Normalization</h3>
+            <ul>
+              <li>PDF / HTML / Markdown / API JSON</li>
+              <li>Clean noise, extract text</li>
+              <li>Canonical schema</li>
+              <li>Attach source metadata</li>
+            </ul>
+          </article>
+          <div class="arrow" aria-hidden="true"><span>→</span></div>
+          <article class="node accent-ingest" role="listitem">
+            <span class="step">3 · Chunk</span>
+            <h3>Intelligent Chunking</h3>
+            <ul>
+              <li>Semantic / structure-aware splits</li>
+              <li>Overlap for continuity</li>
+              <li>Preserve headings &amp; section IDs</li>
+              <li>Size tuned to embedding window</li>
+            </ul>
+          </article>
+          <div class="arrow" aria-hidden="true"><span>→</span></div>
+          <article class="node accent-llm" role="listitem">
+            <span class="step">4 · Embed</span>
+            <h3>Embedding Model</h3>
+            <ul>
+              <li>Vectorize each chunk</li>
+              <li>Batch where possible</li>
+              <li>Version embeddings with model ID</li>
+            </ul>
+          </article>
+          <div class="arrow" aria-hidden="true"><span>→</span></div>
+          <article class="node accent-store wide" role="listitem">
+            <span class="step">5 · Persist</span>
+            <h3>Vector Store (Knowledge Hub)</h3>
+            <ul>
+              <li><strong>Vectors</strong> — dense embeddings</li>
+              <li><strong>Original text / chunk</strong> — recoverable context</li>
+              <li><strong>Metadata</strong> — source, title, timestamps, section</li>
+              <li><strong>Permissions</strong> — ACL / tenant / role filters</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== BRIDGE ===================== -->
+    <section class="lane lane-bridge" aria-labelledby="bridge-title">
+      <div class="lane-head">
+        <div>
+          <h2 id="bridge-title">Shared Knowledge Hub</h2>
+          <p>Ingestion writes; retrieval reads. The same store powers hybrid search (semantic + BM25 lexical) with permission filtering.</p>
+        </div>
+        <span class="lane-tag">System of record for RAG</span>
+      </div>
+      <div class="lane-body">
+        <div class="bridge">
+          <div class="connector">
+            <div class="big">↓</div>
+            Async writes from<br />ingestion pipeline
+          </div>
+          <div class="store-box">
+            <h3>Vector Store Contents</h3>
+            <div class="store-layers">
+              <div class="store-layer"><strong>Vectors</strong><span>Dense embeddings for semantic similarity (ANN / cosine / HNSW)</span></div>
+              <div class="store-layer"><strong>Chunk text</strong><span>Original normalized text returned as LLM context</span></div>
+              <div class="store-layer"><strong>Metadata</strong><span>Source URI, doc id, chunk index, updated_at, tags</span></div>
+              <div class="store-layer"><strong>Permissions</strong><span>User/role/tenant ACL applied at query time</span></div>
+              <div class="store-layer"><strong>Lexical index</strong><span>BM25 / sparse index for hybrid search</span></div>
+            </div>
+          </div>
+          <div class="connector">
+            <div class="big">↑</div>
+            Sync reads from<br />retrieval path
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== RETRIEVAL ===================== -->
+    <section class="lane lane-retrieve" aria-labelledby="retrieve-title">
+      <div class="lane-head">
+        <div>
+          <h2 id="retrieve-title">2. Knowledge Retrieval &amp; Response Path</h2>
+          <p>User question → intent extraction → route to normal chat, direct RAG, or query-understanding-then-RAG → hybrid search → rerank → grounded LLM answer.</p>
+        </div>
+        <span class="lane-tag">Read path · Online / request</span>
+      </div>
+      <div class="lane-body">
+        <div class="flow" role="list">
+          <article class="node accent-retrieve" role="listitem">
+            <span class="step">A</span>
+            <h3>User Asks a Question</h3>
+            <ul>
+              <li>Chat / API request</li>
+              <li>Session + user identity</li>
+              <li>Optional conversation history</li>
+            </ul>
+          </article>
+          <div class="arrow" aria-hidden="true"><span>→</span></div>
+          <article class="node accent-llm decision" role="listitem">
+            <span class="step">B · Intent</span>
+            <h3>LLM — Intent Extract</h3>
+            <ul>
+              <li>Normal Query (no KB)</li>
+              <li>KB Needed</li>
+              <li>KB Needed after Query Understanding</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="subflow">
+          <h4>Intelligent Intent Routing (three paths)</h4>
+          <div class="intent-grid">
+            <div class="intent-card">
+              <h5><span class="pill pill-a">Path 1</span> Normal Query</h5>
+              <p>Greeting, capability questions, chit-chat — no retrieval.</p>
+              <ol>
+                <li>Skip embedding &amp; vector search</li>
+                <li>Call response LLM directly</li>
+                <li>Example: “Good morning!” / “What can you do?”</li>
+              </ol>
+            </div>
+            <div class="intent-card">
+              <h5><span class="pill pill-b">Path 2</span> KB Needed</h5>
+              <p>Clear factual / ops question grounded in knowledge.</p>
+              <ol>
+                <li>Embed the user question</li>
+                <li>Search vector store (hybrid)</li>
+                <li>Rerank → inject context → answer LLM</li>
+              </ol>
+            </div>
+            <div class="intent-card">
+              <h5><span class="pill pill-c">Path 3</span> KB after Query Understanding</h5>
+              <p>Very large / ambiguous questions need rewrite first.</p>
+              <ol>
+                <li>LLM understands / rewrites / decomposes query</li>
+                <li>Send clarified query to embedding model</li>
+                <li>Then hybrid search → rerank → answer LLM</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+
+        <div class="subflow" style="margin-top:14px;">
+          <h4>Retrieval pipeline (Paths 2 &amp; 3)</h4>
+          <div class="flow" role="list">
+            <article class="node accent-llm" role="listitem">
+              <span class="step">C</span>
+              <h3>Embedding Model</h3>
+              <ul>
+                <li>Vectorize question (or rewritten query)</li>
+              </ul>
+            </article>
+            <div class="arrow" aria-hidden="true"><span>→</span></div>
+            <article class="node accent-store" role="listitem">
+              <span class="step">D</span>
+              <h3>Hybrid Search</h3>
+              <ul>
+                <li>Semantic (dense / ANN)</li>
+                <li>BM25 (lexical / sparse)</li>
+                <li>Fusion (e.g. RRF)</li>
+                <li>Permission filters</li>
+              </ul>
+            </article>
+            <div class="arrow" aria-hidden="true"><span>→</span></div>
+            <article class="node accent-retrieve" role="listitem">
+              <span class="step">E</span>
+              <h3>Reranker</h3>
+              <ul>
+                <li>Cross-encoder / multi-metric</li>
+              </ul>
+              <div class="metrics">
+                <span class="metric">Recall@5</span>
+                <span class="metric">MRR@5</span>
+                <span class="metric">Precision@5</span>
+              </div>
+            </article>
+            <div class="arrow" aria-hidden="true"><span>→</span></div>
+            <article class="node accent-llm" role="listitem">
+              <span class="step">F</span>
+              <h3>LLM + Retrieved Context</h3>
+              <ul>
+                <li>Grounded prompt</li>
+                <li>Citations / sources</li>
+              </ul>
+            </article>
+            <div class="arrow" aria-hidden="true"><span>→</span></div>
+            <article class="node accent-retrieve" role="listitem">
+              <span class="step">G</span>
+              <h3>Response to User</h3>
+              <ul>
+                <li>Answer + optional sources</li>
+                <li>Streaming if enabled</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== OPTIMIZATION ===================== -->
+    <section class="lane lane-optimize" aria-labelledby="opt-title">
+      <div class="lane-head">
+        <div>
+          <h2 id="opt-title">3. Cost, Latency &amp; Quality Optimization Layer</h2>
+          <p>Applied across the retrieval path (and where relevant during ingestion). Makes LLM responses faster, cheaper, and more reliable without changing the logical RAG flow.</p>
+        </div>
+        <span class="lane-tag">Cross-cutting · Applied in Path 2</span>
+      </div>
+      <div class="lane-body">
+        <div class="opt-grid">
+          <article class="opt-card">
+            <h3>Intelligent Model Routing</h3>
+            <p>Route each request to the right model tier: cheap/fast for intent &amp; greetings; stronger models for hard reasoning and final grounded answers.</p>
+            <div class="where">Where: Intent LLM · Query Understanding · Final Response</div>
+          </article>
+          <article class="opt-card">
+            <h3>Prompt Caching</h3>
+            <p>Cache stable system prompts, tool schemas, and repeated KB prefixes so subsequent calls pay less for identical prefix tokens.</p>
+            <div class="where">Where: Repeated system + policy prompts; structured tool defs</div>
+          </article>
+          <article class="opt-card">
+            <h3>Context Budgeting</h3>
+            <p>Hard token budget for history + retrieved chunks. Prefer highest-reranked evidence; drop low-value tokens before the LLM call.</p>
+            <div class="where">Where: Before Final Response LLM (step F)</div>
+          </article>
+          <article class="opt-card">
+            <h3>Sliding Window</h3>
+            <p>Keep only the most recent N turns (or token-bounded window) so long sessions stay within limits.</p>
+            <div class="where">Where: Conversation history assembly</div>
+          </article>
+          <article class="opt-card">
+            <h3>Summarization</h3>
+            <p>Compress older turns or oversized retrieved docs into concise summaries to preserve meaning under budget.</p>
+            <div class="where">Where: Long chats · Path 3 large questions · oversized chunks</div>
+          </article>
+          <article class="opt-card">
+            <h3>Parallel LLM Calls</h3>
+            <p>Run independent work concurrently (e.g. multi-query rewrite, multi-hop sub-questions) then merge results.</p>
+            <div class="where">Where: Query Understanding · multi-facet retrieval</div>
+          </article>
+          <article class="opt-card">
+            <h3>Structured Outputs</h3>
+            <p>Force JSON / schema for intent labels, rewrite plans, and citation objects — fewer parse errors, cleaner routing.</p>
+            <div class="where">Where: Intent Extract · Query Understanding · citations</div>
+          </article>
+          <article class="opt-card">
+            <h3>Batching</h3>
+            <p>Batch embedding jobs (ingestion) and, where APIs allow, batch small classification/routing calls.</p>
+            <div class="where">Where: Ingestion embeddings · offline eval · bulk ingest</div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================== END-TO-END SUMMARY ===================== -->
+    <section class="lane" aria-labelledby="e2e-title">
+      <div class="lane-head" style="background:linear-gradient(90deg,#f8fafc,#ecfeff);">
+        <div>
+          <h2 id="e2e-title">End-to-End Mental Model</h2>
+          <p>One picture of how write-path and read-path meet at the vector store, with optimization wrapped around every LLM hop.</p>
+        </div>
+        <span class="lane-tag" style="background:#e2e8f0;color:#334155;">Learning summary</span>
+      </div>
+      <div class="lane-body">
+        <svg viewBox="0 0 1100 420" width="100%" height="auto" role="img" aria-label="End-to-end OperateSolve knowledge architecture">
+          <defs>
+            <marker id="arrowHead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#64748b" />
+            </marker>
+            <filter id="soft" x="-5%" y="-5%" width="110%" height="110%">
+              <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-opacity="0.12"/>
+            </filter>
+          </defs>
+
+          <!-- Ingestion band -->
+          <rect x="20" y="20" width="1060" height="120" rx="12" fill="#f0fdfa" stroke="#99f6e4" />
+          <text x="36" y="44" font-size="13" font-weight="700" fill="#0f766e">INGESTION (async)</text>
+
+          <rect x="40" y="58" width="150" height="60" rx="8" fill="#fff" stroke="#14b8a6" filter="url(#soft)"/>
+          <text x="115" y="84" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">Sources</text>
+          <text x="115" y="102" text-anchor="middle" font-size="9" fill="#475569">APIs · Webhooks · Δ</text>
+
+          <line x1="190" y1="88" x2="220" y2="88" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <rect x="222" y="58" width="150" height="60" rx="8" fill="#fff" stroke="#14b8a6" filter="url(#soft)"/>
+          <text x="297" y="84" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">Parse / Normalize</text>
+          <text x="297" y="102" text-anchor="middle" font-size="9" fill="#475569">Canonical docs</text>
+
+          <line x1="372" y1="88" x2="402" y2="88" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <rect x="404" y="58" width="140" height="60" rx="8" fill="#fff" stroke="#14b8a6" filter="url(#soft)"/>
+          <text x="474" y="84" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">Chunk</text>
+          <text x="474" y="102" text-anchor="middle" font-size="9" fill="#475569">Intelligent splits</text>
+
+          <line x1="544" y1="88" x2="574" y2="88" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <rect x="576" y="58" width="140" height="60" rx="8" fill="#fff1f2" stroke="#fb7185" filter="url(#soft)"/>
+          <text x="646" y="84" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">Embed</text>
+          <text x="646" y="102" text-anchor="middle" font-size="9" fill="#475569">+ batching</text>
+
+          <line x1="716" y1="88" x2="760" y2="88" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <!-- Vector store center -->
+          <rect x="760" y="48" width="300" height="80" rx="10" fill="#f5f3ff" stroke="#8b5cf6" stroke-width="2" filter="url(#soft)"/>
+          <text x="910" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#6d28d9">VECTOR STORE</text>
+          <text x="910" y="98" text-anchor="middle" font-size="10" fill="#5b21b6">vectors · text · metadata · permissions · BM25</text>
+          <text x="910" y="114" text-anchor="middle" font-size="9" fill="#7c3aed">← write  |  read →</text>
+
+          <!-- Retrieval band -->
+          <rect x="20" y="160" width="1060" height="230" rx="12" fill="#eff6ff" stroke="#bfdbfe" />
+          <text x="36" y="184" font-size="13" font-weight="700" fill="#1d4ed8">RETRIEVAL (online)  +  OPTIMIZATION overlay</text>
+
+          <rect x="40" y="200" width="120" height="56" rx="8" fill="#fff" stroke="#3b82f6" filter="url(#soft)"/>
+          <text x="100" y="226" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">User Question</text>
+          <text x="100" y="242" text-anchor="middle" font-size="9" fill="#475569">+ identity</text>
+
+          <line x1="160" y1="228" x2="190" y2="228" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <rect x="192" y="200" width="150" height="56" rx="8" fill="#fff1f2" stroke="#fb7185" filter="url(#soft)"/>
+          <text x="267" y="222" text-anchor="middle" font-size="11" font-weight="600" fill="#0f172a">Intent LLM</text>
+          <text x="267" y="240" text-anchor="middle" font-size="9" fill="#475569">structured output</text>
+
+          <!-- three paths -->
+          <line x1="267" y1="256" x2="267" y2="280" stroke="#64748b"/>
+          <line x1="120" y1="280" x2="520" y2="280" stroke="#64748b"/>
+          <line x1="120" y1="280" x2="120" y2="295" stroke="#64748b" marker-end="url(#arrowHead)"/>
+          <line x1="300" y1="280" x2="300" y2="295" stroke="#64748b" marker-end="url(#arrowHead)"/>
+          <line x1="520" y1="280" x2="520" y2="295" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <rect x="40" y="298" width="160" height="70" rx="8" fill="#fff" stroke="#94a3b8" filter="url(#soft)"/>
+          <text x="120" y="320" text-anchor="middle" font-size="10" font-weight="700" fill="#334155">Path 1 · Normal</text>
+          <text x="120" y="338" text-anchor="middle" font-size="9" fill="#475569">No KB · Response LLM</text>
+          <text x="120" y="354" text-anchor="middle" font-size="9" fill="#b45309">cheap model route</text>
+
+          <rect x="220" y="298" width="160" height="70" rx="8" fill="#fff" stroke="#3b82f6" filter="url(#soft)"/>
+          <text x="300" y="320" text-anchor="middle" font-size="10" font-weight="700" fill="#1d4ed8">Path 2 · KB Needed</text>
+          <text x="300" y="338" text-anchor="middle" font-size="9" fill="#475569">Embed → Hybrid → Rerank</text>
+          <text x="300" y="354" text-anchor="middle" font-size="9" fill="#b45309">budget + cache</text>
+
+          <rect x="440" y="298" width="160" height="70" rx="8" fill="#fff" stroke="#8b5cf6" filter="url(#soft)"/>
+          <text x="520" y="320" text-anchor="middle" font-size="10" font-weight="700" fill="#6d28d9">Path 3 · Understand</text>
+          <text x="520" y="338" text-anchor="middle" font-size="9" fill="#475569">Rewrite LLM → Embed…</text>
+          <text x="520" y="354" text-anchor="middle" font-size="9" fill="#b45309">parallel + summarize</text>
+
+          <!-- right side pipeline for KB paths -->
+          <line x1="600" y1="333" x2="640" y2="333" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <rect x="642" y="298" width="120" height="70" rx="8" fill="#f5f3ff" stroke="#8b5cf6" filter="url(#soft)"/>
+          <text x="702" y="322" text-anchor="middle" font-size="10" font-weight="700" fill="#6d28d9">Hybrid</text>
+          <text x="702" y="340" text-anchor="middle" font-size="9" fill="#475569">Semantic + BM25</text>
+          <text x="702" y="356" text-anchor="middle" font-size="9" fill="#475569">→ Rerank @5</text>
+
+          <line x1="762" y1="333" x2="800" y2="333" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <rect x="802" y="298" width="120" height="70" rx="8" fill="#fff1f2" stroke="#fb7185" filter="url(#soft)"/>
+          <text x="862" y="322" text-anchor="middle" font-size="10" font-weight="700" fill="#be123c">Answer LLM</text>
+          <text x="862" y="340" text-anchor="middle" font-size="9" fill="#475569">+ retrieved ctx</text>
+          <text x="862" y="356" text-anchor="middle" font-size="9" fill="#b45309">budgeted prompt</text>
+
+          <line x1="922" y1="333" x2="960" y2="333" stroke="#64748b" marker-end="url(#arrowHead)"/>
+
+          <rect x="962" y="298" width="100" height="70" rx="8" fill="#fff" stroke="#3b82f6" filter="url(#soft)"/>
+          <text x="1012" y="333" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">User</text>
+          <text x="1012" y="350" text-anchor="middle" font-size="9" fill="#475569">response</text>
+
+          <!-- dashed link store <-> hybrid -->
+          <line x1="910" y1="128" x2="702" y2="298" stroke="#8b5cf6" stroke-dasharray="4 3" stroke-width="1.5"/>
+          <text x="820" y="220" font-size="9" fill="#6d28d9" font-weight="600">query + ACL</text>
+
+          <!-- optimization banner -->
+          <rect x="40" y="380" width="1020" height="28" rx="6" fill="#fffbeb" stroke="#fcd34d"/>
+          <text x="550" y="399" text-anchor="middle" font-size="10" fill="#92400e" font-weight="600">
+            Optimization wrap: Model Routing · Prompt Caching · Context Budget · Sliding Window · Summarization · Parallel Calls · Structured Outputs · Batching
+          </text>
+        </svg>
+      </div>
+    </section>
+
+    <footer class="notes">
+      <strong>How to use this diagram:</strong>
+      Trace the top lane as the continuous write path into the vector store, then the retrieval lane as the online read path.
+      Intent routing decides whether you pay for retrieval at all; the orange optimization cards are the levers that keep RAG production systems fast and cost-efficient.
+      Open this file in any browser. Learning artifact only — no application code was changed.
+    </footer>
+  </div>
+</body>
+</html>

@@ -92,5 +92,4 @@ if (Test-PortOpen 3000) {
 
 Write-Host ""
 Write-Host "Browser API path: /api/* (Next.js proxies to 127.0.0.1:8000)."
-Write-Host "Remote demo: see REMOTE_DEMO_SETUP.md (do not expose port 8000)."
 Write-Host "Close those two windows to stop the app."
